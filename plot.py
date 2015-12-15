@@ -107,21 +107,21 @@ for i in range(len(training)):
     if args.atk != 5 and args.set != 'validation':
         c = ax_err.plot(range(1, xend), [1-dp[1] for dp in training[i]], '--', color=c, marker='s', markersize=ms, linewidth=lw)
         c = c[0].get_color()
-        tlegends.append('{}, training, exact'.format(model))
+        tlegends.append('{}, train@1'.format(model))
     if args.atk != 1 and args.set != 'validation':
         c = ax_err.plot(range(1, xend), [1-dp[2] for dp in training[i]], '--', color=c, marker='o', markersize=ms, linewidth=lw)
         c = c[0].get_color()
-        tlegends.append('{}, training, top 5'.format(model))
+        tlegends.append('{}, train@5'.format(model))
 
     xend = len(validation[i])+1
     if args.atk != 5 and args.set != 'training':
         c = ax_err.plot(range(1, xend), [1-dp[1] for dp in validation[i]], '', color=c, marker='s', markersize=ms, linewidth=lw)
         c = c[0].get_color()
-        tlegends.append('{}, validation, exact'.format(model))
+        tlegends.append('{}, val@1'.format(model))
     if args.atk != 1 and args.set != 'training':
         c = ax_err.plot(range(1, xend), [1-dp[2] for dp in validation[i]], '', color=c, marker='o', markersize=ms, linewidth=lw)
         c = c[0].get_color()
-        tlegends.append('{}, validation, top 5'.format(model))
+        tlegends.append('{}, val@5'.format(model))
 
 loc = 0
 if args.max <= 0.5:
