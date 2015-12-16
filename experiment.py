@@ -369,6 +369,52 @@ def goofy(network, cropsz, batchsz):
 
     return network
 
+def goory(network, cropsz, batchsz):
+    # 1st. Data size 117 -> 111 -> 55
+    # 117*117*32 = 438048
+    network = Conv2DLayer(network, 32, (3, 3), stride=1,
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    # 115*115*32 = 423200
+    network = Conv2DLayer(network, 32, (3, 3), stride=1,
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    # 55*55*48 = 121000
+    network = gooey_gadget(network, 32, 2) # 32 + 32 = 64 channels
+
+    # 2nd. Data size 55 -> 27
+    # 27*27*96 = 69984
+    network = gooey_gadget(network, 32, 2) # 64 + 32 = 96 channels
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856
+    network = gooey_gadget(network, 128, 2) # 96 + 128 = 224 channels
+    shortcut = MaxPool2DLayer(network, (3, 3), stride=1)
+
+    # 4th.  Data size 13 -> 11 -> 5
+    # 11*11*192 = 23232
+    network = Conv2DLayer(network, 192, (3, 3),
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    network = ConcatLayer((network, shortcut))  # Another 224 channels
+    # network = DropoutLayer(network, p=0.25)
+
+    # 5*5*412 = 10400
+    network = gooey_gadget(network, 224, 2) # 192 + 224 = 416 channels
+
+    # 5th. Data size 5 -> 3
+    # 3*3*672 = 6048
+    network = gooey_gadget(network, 256, 1) # 416 + 256 = 672 channels
+
+    # 6th. Data size 3 -> 1, 592 + 512 channels
+    # 1*1*1184 = 1184
+    network = gooey_gadget(network, 512, 1) # 672 + 512 = 1184 channels
+
+    return network
+
 def goosy(network, cropsz, batchsz):
     # 1st. Data size 117 -> 111 -> 55
     # 117*117*32 = 438048
@@ -620,6 +666,55 @@ def goozy(network, cropsz, batchsz):
     # 6th. Data size 3 -> 1, 592 + 512 channels
     # 1*1*1184 = 1184
     network = goozy_gadget(network, 512, 1) # 672 + 512 = 1184 channels
+
+    return network
+
+def goofx(network, cropsz, batchsz):
+    # 1st. Data size 117 -> 111 -> 55
+    # 117*117*32 = 438048
+    network = Conv2DLayer(network, 32, (3, 3), stride=1,
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    # 115*115*32 = 423200
+    network = Conv2DLayer(network, 32, (3, 3), stride=1,
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    # 55*55*48 = 121000
+    network = gooey_gadget(network, 32, 2) # 32 + 32 = 64 channels
+
+    # 2nd. Data size 55 -> 27
+    # 27*27*96 = 69984
+    network = gooey_gadget(network, 32, 2) # 64 + 32 = 96 channels
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856
+    network = gooey_gadget(network, 128, 2) # 96 + 128 = 224 channels
+
+    # 4th.  Data size 13 -> 11 -> 5
+    # 11*11*192 = 23232
+    network = Conv2DLayer(network, 96, (1, 1),
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+
+    network = Conv2DLayer(network, 192, (3, 3),
+        W=HeNormal(1.372))
+    network = prelu(network)
+    network = BatchNormLayer(network)
+    # network = DropoutLayer(network, p=0.25)
+
+    # 5*5*412 = 10400
+    network = gooey_gadget(network, 224, 2) # 192 + 224 = 416 channels
+
+    # 5th. Data size 5 -> 3
+    # 3*3*672 = 6048
+    network = gooey_gadget(network, 256, 1) # 416 + 256 = 672 channels
+
+    # 6th. Data size 3 -> 1, 592 + 512 channels
+    # 1*1*1184 = 1184
+    network = gooey_gadget(network, 512, 1) # 672 + 512 = 1184 channels
 
     return network
 
