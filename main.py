@@ -23,6 +23,8 @@ parser.add_argument('-s', '--batch-stop', type=int, help='stop after this many b
 parser.add_argument('-e', '--epoch-stop', type=int, help='stop after this many epochs', default=0)
 parser.add_argument('-o', '--outdir', help='store trained network state in this directory', default=None)
 parser.add_argument('-n', '--network', help='name of network experiment', default='base')
+parser.add_argument('--remix', help='remix inputs for training', action='store_true')
+parser.set_defaults(remix=False)
 parser.add_argument('--limit', type=int, help='limit analyses to this many images', default=None)
 parser.add_argument('--no-plot', help='skip the plot', action='store_false')
 parser.set_defaults(plot=True)
@@ -139,6 +141,26 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False, test=False):
         else:
             excerpt = slice(start_idx, start_idx + batchsize)
             yield inputs[excerpt], targets[excerpt]
+
+def remix(iterator, shufflenum):
+    inputs = []
+    targets = []
+    def flush():
+        if len(inputs):
+            batchsize = len(inputs[0])
+            inpcat = numpy.concatenate(inputs)
+            targcat = numpy.concatenate(targets)
+            perm = numpy.random.permutation(len(inpcat))
+            for s in range(0, len(inpcat), batchsize):
+                yield inpcat[perm[s:s+batchsize]], targcat[perm[s:s+batchsize]]
+            inputs.clear()
+            targets.clear()
+    for inp, targ in iterator:
+        inputs.append(inp)
+        targets.append(targ)
+        if len(inputs) >= shufflenum:
+            yield from flush()
+    yield from flush()
 
 training = []
 validation = []
@@ -290,7 +312,10 @@ while epoch < end:
     p = progress(train_batches)
     i = 1
     frame = numpy.zeros((2,), dtype=numpy.int32)
-    for inp, res in iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True):
+    it = iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True)
+    if args.remix:
+        it = remix(it)
+    for inp, res in it:
         flip = numpy.random.randint(0, 2) and 1 or -1
         frame[0] = numpy.random.randint(0, imsz - cropsz)
         frame[1] = numpy.random.randint(0, imsz - cropsz)
