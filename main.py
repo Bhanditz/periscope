@@ -319,8 +319,8 @@ while epoch < end:
     for inp, res in it:
         lr -= learning_rates[epoch] / train_batches
         flip = numpy.random.randint(0, 2) and 1 or -1
-        frame[0] = numpy.random.randint(0, imsz - cropsz)
-        frame[1] = numpy.random.randint(0, imsz - cropsz)
+        frame[0] = numpy.random.randint(0, imsz - cropsz + 1)
+        frame[1] = numpy.random.randint(0, imsz - cropsz + 1)
         train_loss += train_fn(lr, flip, frame, inp, res)
         p.update(i)
         i = i+1
