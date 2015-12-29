@@ -103,7 +103,7 @@ subtask("parameter count {} ({} trainable) in {} arrays".format(
         len(saveparams)))
 
 # compile training function that updates parameters and returns training loss
-train_fn = theano.function([learning_rate, flip_var, crop_var, input_var, target_var], loss, updates=updates)
+train_fn = theano.function([learning_rate, flip_var, crop_var, input_var, target_var], loss, updates=updates, allow_input_downcast=True)
 
 # Create a loss expression for validation/testing. The crucial difference here
 # is that we do a deterministic forward pass through the network, disabling
@@ -315,11 +315,13 @@ while epoch < end:
     it = iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True)
     if args.remix:
         it = remix(it)
+    lr = learning_rates[epoch] * 2
     for inp, res in it:
+        lr -= learning_rates[epoch] / train_batches
         flip = numpy.random.randint(0, 2) and 1 or -1
         frame[0] = numpy.random.randint(0, imsz - cropsz)
         frame[1] = numpy.random.randint(0, imsz - cropsz)
-        train_loss += train_fn(learning_rates[epoch], flip, frame, inp, res)
+        train_loss += train_fn(lr, flip, frame, inp, res)
         p.update(i)
         i = i+1
         if i > train_batches:
