@@ -52,11 +52,24 @@ y_val = numpy.memmap(os.path.join(args.tagged, "val.labels.db"), dtype=numpy.int
 X_val = numpy.memmap(os.path.join(args.tagged, "val.images.db"), dtype=numpy.float32, mode='r', shape=(len(y_val), 3, imsz, imsz))
 
 task("Building model and compiling functions")
+
+# import external network
+if args.network not in experiment.__dict__:
+    print("No network {} found.".format(args.network))
+    import sys
+    sys.exit(1)
+
+# dispatch to user-defined network
+network_fn = experiment.__dict__[args.network]
+
 # create Theano variables for input and target minibatch
 learning_rates = numpy.logspace(-1.5, -4, 30, dtype=theano.config.floatX)
 learning_rate = T.scalar('l')
 input_var = T.tensor4('X')
 target_var = T.ivector('y')
+
+if hasattr(network_fn, 'cropsz'):
+    cropsz = network_fn.cropsz
 
 # parameters
 flip_var = T.iscalar('f')
@@ -71,15 +84,7 @@ prepared = cropped[:,:,:,::flip_var]
 # input layer is always the same
 network = lasagne.layers.InputLayer(
         (args.batchsize, 3, cropsz, cropsz), prepared)
-
-# import external network
-if args.network not in experiment.__dict__:
-    print("No network {} found.".format(args.network))
-    import sys
-    sys.exit(1)
-
-# dispatch to user-defined network
-network = experiment.__dict__[args.network](network, cropsz, args.batchsize)
+network = network_fn(network, cropsz, args.batchsize)
 
 # Last softmax layer is always the same
 from lasagne.nonlinearities import softmax
