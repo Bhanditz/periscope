@@ -35,8 +35,6 @@ if len(args.model) != 1 and not args.combine:
 imsz = 128
 cropsz = 117
 
-center = numpy.floor((imsz - cropsz)/2)
-crops = [0, center, imsz - cropsz - 1]
 flips = [False, True]
 
 section("Setup")
@@ -57,9 +55,6 @@ for m in args.model:
     # create Theano variables for input and target minibatch
     input_var = T.tensor4('X')
 
-    # input layer is always the same
-    network = lasagne.layers.InputLayer((args.batchsize, 3, cropsz, cropsz), input_var)
-
     # import external network
     if args.network[ni] not in experiment.__dict__:
         print("No network {} found.".format(args.network[ni]))
@@ -67,7 +62,19 @@ for m in args.model:
         sys.exit(1)
 
     # dispatch to user-defined network
-    network = experiment.__dict__[args.network[ni]](network, cropsz, args.batchsize)
+    network_fn = experiment.__dict__[args.network[ni]]
+    if hasattr(network_fn, 'cropsz'):
+        cropsz = network_fn.cropsz
+    else:
+        cropsz = 117
+
+    # input layer is always the same
+    network = lasagne.layers.InputLayer((args.batchsize, 3, cropsz, cropsz), input_var)
+
+    network = network_fn(network, cropsz, args.batchsize)
+
+    center = numpy.floor((imsz - cropsz)/2)
+    crops = [0, center, imsz - cropsz]
 
     # Last softmax layer is always the same
     from lasagne.nonlinearities import softmax
