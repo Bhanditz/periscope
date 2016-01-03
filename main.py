@@ -2,6 +2,7 @@
 
 from progressbar import ProgressBar
 from pretty import *
+from model import Model
 import argparse
 import experiment
 import lasagne
@@ -40,6 +41,7 @@ if args.outdir is None:
 
 imsz = 128
 cropsz = 117
+learning_rates = numpy.logspace(-1.5, -4, 30, dtype=theano.config.floatX)
 
 section("Setup")
 task("Loading data")
@@ -59,73 +61,20 @@ if args.network not in experiment.__dict__:
     import sys
     sys.exit(1)
 
-# dispatch to user-defined network
-network_fn = experiment.__dict__[args.network]
-
-# create Theano variables for input and target minibatch
-learning_rates = numpy.logspace(-1.5, -4, 30, dtype=theano.config.floatX)
-learning_rate = T.scalar('l')
-input_var = T.tensor4('X')
-target_var = T.ivector('y')
-
-if hasattr(network_fn, 'cropsz'):
-    cropsz = network_fn.cropsz
-
-# parameters
-flip_var = T.iscalar('f')
-crop_var = T.ivector('c') # ycrop, xcrop
-center = numpy.zeros((2,), dtype=numpy.int32)
-center.fill(numpy.floor((imsz - cropsz)/2))
-
-# crop+flip
-cropped = input_var[:, :, crop_var[0]:crop_var[0]+cropsz, crop_var[1]:crop_var[1]+cropsz]
-prepared = cropped[:,:,:,::flip_var]
-
-# input layer is always the same
-network = lasagne.layers.InputLayer(
-        (args.batchsize, 3, cropsz, cropsz), prepared)
-network = network_fn(network, cropsz, args.batchsize)
-
-# Last softmax layer is always the same
-from lasagne.nonlinearities import softmax
-network = lasagne.layers.DenseLayer(network, cats, nonlinearity=softmax)
-
-# Output
-prediction = lasagne.layers.get_output(network)
-
-# create loss function
-from lasagne.regularization import regularize_network_params, l2, l1
-loss = lasagne.objectives.categorical_crossentropy(prediction, target_var).mean()
-loss += regularize_network_params(network, l2) * 1e-3
-
-# create parameter update expressions
-params = lasagne.layers.get_all_params(network, trainable=True)
-saveparams = lasagne.layers.get_all_params(network)
-updates = lasagne.updates.nesterov_momentum(loss, params, learning_rate=learning_rate, momentum=args.momentum)
-subtask("parameter count {} ({} trainable) in {} arrays".format(
-        lasagne.layers.count_params(network),
-        lasagne.layers.count_params(network, trainable=True),
-        len(saveparams)))
+model = Model(args.network, None, batchsize=args.batchsize, cats=cats)
+cropsz = model.cropsz
+subtask("parameter count {} ({} trainable)".format(
+        lasagne.layers.count_params(model.network),
+        lasagne.layers.count_params(model.network, trainable=True)))
 
 # compile training function that updates parameters and returns training loss
-train_fn = theano.function([learning_rate, flip_var, crop_var, input_var, target_var], loss, updates=updates, allow_input_downcast=True)
-
-# Create a loss expression for validation/testing. The crucial difference here
-# is that we do a deterministic forward pass through the network, disabling
-# dropout layers.
-test_prediction = lasagne.layers.get_output(network, deterministic=True)
-test_loss = lasagne.objectives.categorical_crossentropy(test_prediction,
-                                                        target_var)
-test_loss = test_loss.mean()
-# As a bonus, also create an expression for the classification accuracy:
-test_1_acc = T.mean(lasagne.objectives.categorical_accuracy(test_prediction, target_var, top_k=1))
-test_5_acc = T.mean(lasagne.objectives.categorical_accuracy(test_prediction, target_var, top_k=5))
+train_fn = model.train_fn()
 
 # compile a second function computing the validation loss and accuracy:
-val_fn = theano.function([input_var, target_var, theano.Param(flip_var, default=1), theano.Param(crop_var, default=center)], [test_loss, test_1_acc, test_5_acc])
+val_fn = model.acc_fn()
 
 # a function for debug output
-debug_fn = theano.function([input_var, theano.Param(flip_var, default=1), theano.Param(crop_var, default=center)], test_prediction)
+debug_fn = model.eval_fn()
 
 def iterate_minibatches(inputs, targets, batchsize, shuffle=False, test=False):
     assert len(inputs) == len(targets)
@@ -246,7 +195,7 @@ def latest_cachefile():
     return os.path.join(args.outdir, caches[0])
 
 def reload_model(resumefile):
-    global epoch, training, validation, saveparams, params
+    global epoch, training, validation, model
     lfile = open(resumefile, 'rb')
     section("Restoring state from {}".format(resumefile))
     lfile.seek(0)
@@ -263,16 +212,17 @@ def reload_model(resumefile):
     training = pickle.load(lfile)
     validation = pickle.load(lfile)
     task("Restoring parameter values")
-    fileparams = saveparams if formatver >= 1 else params
-    assert len(fileparams) == len(state)
-    for p, v in zip(fileparams, state):
+    saveparams = lasagne.layers.get_all_params(model.network)
+    assert len(saveparams) == len(state)
+    for p, v in zip(saveparams, state):
         p.set_value(v)
     epoch += 1
     subtask("Resuming at epoch {}".format(epoch))
 
 def save_model(sfilename):
-    global epoch, training, validation, saveparams
+    global epoch, training, validation, model
     subtask("Storing trained parameters as {}".format(sfilename))
+    saveparams = lasagne.layers.get_all_params(model.network)
     with open(sfilename, 'wb+') as sfile:
         sfile.seek(0)
         sfile.truncate()
@@ -326,7 +276,7 @@ while epoch < end:
         flip = numpy.random.randint(0, 2) and 1 or -1
         frame[0] = numpy.random.randint(0, imsz - cropsz + 1)
         frame[1] = numpy.random.randint(0, imsz - cropsz + 1)
-        train_loss += train_fn(lr, flip, frame, inp, res)
+        train_loss += train_fn(inp, res, lr, flip, frame)
         p.update(i)
         i = i+1
         if i > train_batches:

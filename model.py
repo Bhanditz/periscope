@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+
+import experiment
+import lasagne
+import theano
+import theano.tensor as T
+import pickle
+import numpy
+import os
+import os.path
+
+class Model:
+    def __init__(self, network, filename=None, batchsize=None, cats=100):
+        if network not in experiment.__dict__:
+            raise LookupError("No network {} found.".format(network))
+        self.network_fn = experiment.__dict__[network]
+        self.cropsz = 117
+        self.batchsize = 256
+        self.cats = cats
+        if hasattr(self.network_fn, 'cropsz'):
+            self.cropsz = self.network_fn.cropsz
+        if batchsize is not None:
+            self.batchsize = batchsize
+        self.state = None
+        if filename:
+            lfile = open(filename, 'rb')
+            formatver = pickle.load(lfile)
+            self.state = pickle.load(lfile)
+            lfile.close()
+        self.center = numpy.zeros((2,), dtype=numpy.int32)
+        self.center.fill(numpy.floor((128 - self.cropsz)/2))
+
+        # parameters
+        self.input_var = T.tensor4('X')
+        self.flip_var = T.iscalar('f')
+        self.crop_var = T.ivector('c') # ycrop, xcrop
+        
+        # crop+flip
+        top = self.crop_var[0]
+        left = self.crop_var[1]
+        cropped = self.input_var[:,:,top:top+self.cropsz, left:left+self.cropsz]
+        prepared = cropped[:,:,:,::self.flip_var]
+        
+        # input layer is always the same
+        network = lasagne.layers.InputLayer(
+                (self.batchsize, 3, self.cropsz, self.cropsz), prepared)
+        network = self.network_fn(network, self.cropsz, self.batchsize)
+
+        # Last softmax layer is always the same
+        from lasagne.nonlinearities import softmax
+        network = lasagne.layers.DenseLayer(network, cats, nonlinearity=softmax)
+        self.network = network
+        self.prediction = lasagne.layers.get_output(network, deterministic=True)
+
+        # initialize params based on saved data
+        if self.state:
+            saveparams = lasagne.layers.get_all_params(network)
+            assert len(saveparams) == len(self.state)
+            for p, v in zip(saveparams, state):
+                p.set_value(v)
+
+        # accuracy setup
+        self.target_var = T.ivector('y')
+        self.loss = lasagne.objectives.categorical_crossentropy(
+                self.prediction, self.target_var)
+
+        # training setup
+        self.learning_rate_var = T.scalar('l')
+        train_prediction = lasagne.layers.get_output(network)
+        # create loss function
+        from lasagne.regularization import regularize_network_params, l2
+        loss = lasagne.objectives.categorical_crossentropy(
+                train_prediction, self.target_var).mean()
+        loss += regularize_network_params(network, l2) * 1e-3
+        self.train_loss = loss
+        # create parameter update expressions
+        params = lasagne.layers.get_all_params(network, trainable=True)
+        self.updates = lasagne.updates.nesterov_momentum(
+                loss,
+                params,
+                learning_rate=self.learning_rate_var,
+                momentum=0.9)
+   
+        # As a bonus, create an expression for the classification accuracy:
+        self.test_1_acc = T.mean(lasagne.objectives.categorical_accuracy(
+                self.prediction, self.target_var, top_k=1))
+        self.test_5_acc = T.mean(lasagne.objectives.categorical_accuracy(
+                self.prediction, self.target_var, top_k=5))
+
+    def eval_fn(self):
+        return theano.function([
+                self.input_var,
+                theano.Param(self.flip_var, default=1),
+                theano.Param(self.crop_var, default=self.center)],
+                [lasagne.layers.get_output(self.network, deterministic=True)],
+                allow_input_downcast=True)
+
+    def acc_fn(self):
+        return theano.function([
+                self.input_var,
+                self.target_var,
+                theano.Param(self.flip_var, default=1),
+                theano.Param(self.crop_var, default=self.center)],
+                [self.loss.mean(), self.test_1_acc, self.test_5_acc],
+                allow_input_downcast=True)
+
+    def train_fn(self):
+        return theano.function([
+                self.input_var,
+                self.target_var,
+                self.learning_rate_var,
+                theano.Param(self.flip_var, default=1),
+                theano.Param(self.crop_var, default=self.center)],
+                self.train_loss,
+                updates=self.updates,
+                allow_input_downcast=True)
