@@ -17,6 +17,10 @@ class Model:
         self.cropsz = 117
         self.batchsize = 256
         self.cats = cats
+        self._eval_fn = None
+        self._train_fn = None
+        self._acc_fn = None
+        self._debug_fn = None
         if hasattr(self.network_fn, 'cropsz'):
             self.cropsz = self.network_fn.cropsz
         if batchsize is not None:
@@ -43,12 +47,14 @@ class Model:
         
         # input layer is always the same
         network = lasagne.layers.InputLayer(
-                (self.batchsize, 3, self.cropsz, self.cropsz), prepared)
+                (self.batchsize, 3, self.cropsz, self.cropsz), prepared,
+                name="input")
         network = self.network_fn(network, self.cropsz, self.batchsize)
 
         # Last softmax layer is always the same
         from lasagne.nonlinearities import softmax
-        network = lasagne.layers.DenseLayer(network, cats, nonlinearity=softmax)
+        network = lasagne.layers.DenseLayer(network, cats, name="softmax",
+                nonlinearity=softmax)
         self.network = network
         self.prediction = lasagne.layers.get_output(network, deterministic=True)
 
@@ -87,25 +93,38 @@ class Model:
         self.test_5_acc = T.mean(lasagne.objectives.categorical_accuracy(
                 self.prediction, self.target_var, top_k=5))
 
+    def named_layers(self):
+        return [layer
+                   for layer in lasagne.layers.get_all_layers(self.network)
+                   if layer.name]
+
+    def layer_names(self):
+        return [layer.name for layer in self.named_layers()]
+
     def eval_fn(self):
-        return theano.function([
+        if not self._eval_fn:
+            self._eval_fn = theano.function([
                 self.input_var,
                 theano.Param(self.flip_var, default=1),
                 theano.Param(self.crop_var, default=self.center)],
-                [lasagne.layers.get_output(self.network, deterministic=True)],
+                self.prediction,
                 allow_input_downcast=True)
+        return self._eval_fn
 
     def acc_fn(self):
-        return theano.function([
+        if not self._acc_fn:
+            self._acc_fn = theano.function([
                 self.input_var,
                 self.target_var,
                 theano.Param(self.flip_var, default=1),
                 theano.Param(self.crop_var, default=self.center)],
                 [self.loss.mean(), self.test_1_acc, self.test_5_acc],
                 allow_input_downcast=True)
+        return self._acc_fn
 
     def train_fn(self):
-        return theano.function([
+        if not self._train_fn:
+            self._train_fn = theano.function([
                 self.input_var,
                 self.target_var,
                 self.learning_rate_var,
@@ -114,3 +133,16 @@ class Model:
                 self.train_loss,
                 updates=self.updates,
                 allow_input_downcast=True)
+        return self._train_fn
+
+    def debug_fn(self):
+        if not self._debug_fn:
+            named = self.named_layers()
+            outs = lasagne.layers.get_output(named, deterministic=True)
+            self._debug_fn = theano.function([
+                self.input_var,
+                theano.Param(self.flip_var, default=1),
+                theano.Param(self.crop_var, default=self.center)],
+                outs,
+                allow_input_downcast=True)
+        return self._debug_fn
