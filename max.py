@@ -49,8 +49,10 @@ for model in args.model:
 
         if args.atk == 1:
             val = numpy.max([v[1] for v in vals])
+            epoch = numpy.argmax([v[1] for v in vals])
         else:
             val = numpy.max([v[2] for v in vals])
+            epoch = numpy.argmax([v[2] for v in vals])
 
         num = re.sub(r'^.*?(\d+(\.\d+)?).*$', r'\1', args.names[i])
         print("{}\t{}\t{}\t{}".format(args.names[i], epoch, val, num))
