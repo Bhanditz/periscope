@@ -56,7 +56,7 @@ class Model:
         if self.state:
             saveparams = lasagne.layers.get_all_params(network)
             assert len(saveparams) == len(self.state)
-            for p, v in zip(saveparams, state):
+            for p, v in zip(saveparams, self.state):
                 p.set_value(v)
 
         # accuracy setup

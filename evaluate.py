@@ -2,6 +2,7 @@
 
 from progressbar import ProgressBar
 from pretty import *
+from model import Model
 import argparse
 import experiment
 import lasagne
@@ -23,18 +24,11 @@ parser.add_argument('-b', '--batchsize', type=int, help='size of each mini batch
 parser.add_argument('-s', '--set', help='image set to evaluate on', choices=['test', 'val'], default='test')
 parser.add_argument('-l', '--labels', action='store_true', help='output category labels', default=False)
 parser.add_argument('-d', '--devkit', help='devkit directory containing categories.txt', default='mp-dev_kit')
-parser.add_argument('-c', '--combine', help='combine the output of multiple cropflips', default=False, action='store_true')
 args = parser.parse_args()
 
 assert len(args.network) == len(args.model)
-if len(args.model) != 1 and not args.combine:
-    import sys
-    print("Cannot evaluate on multiple models without combination", file=sys.stderr)
-    sys.exit(1)
 
 imsz = 128
-cropsz = 117
-
 flips = [False, True]
 
 section("Setup")
@@ -46,67 +40,14 @@ y_test = numpy.memmap(os.path.join(args.tagged, "{}.labels.db".format(args.set))
 X_test = numpy.memmap(os.path.join(args.tagged, "{}.images.db".format(args.set)), dtype=numpy.float32, mode='r', shape=(len(y_test), 3, imsz, imsz))
 
 section("Constructing networks")
-ni = 0
 networks = []
-for m in args.model:
+cropsz = []
+for ni, m in enumerate(args.model):
     task(m.name)
     subtask("Building model and compiling functions")
-
-    # create Theano variables for input and target minibatch
-    input_var = T.tensor4('X')
-
-    # import external network
-    if args.network[ni] not in experiment.__dict__:
-        print("No network {} found.".format(args.network[ni]))
-        import sys
-        sys.exit(1)
-
-    # dispatch to user-defined network
-    network_fn = experiment.__dict__[args.network[ni]]
-    if hasattr(network_fn, 'cropsz'):
-        cropsz = network_fn.cropsz
-    else:
-        cropsz = 117
-
-    # input layer is always the same
-    network = lasagne.layers.InputLayer((args.batchsize, 3, cropsz, cropsz), input_var)
-
-    network = network_fn(network, cropsz, args.batchsize)
-
-    center = numpy.floor((imsz - cropsz)/2)
-    crops = [0, center, imsz - cropsz]
-
-    # Last softmax layer is always the same
-    from lasagne.nonlinearities import softmax
-    network = lasagne.layers.DenseLayer(network, cats, nonlinearity=softmax)
-
-    # create parameter update expressions
-    params = lasagne.layers.get_all_params(network, trainable=True)
-    saveparams = lasagne.layers.get_all_params(network)
-
-    # Create an evaluation expression for testing.
-    networks.append(theano.function([input_var], [lasagne.layers.get_output(network, deterministic=True)]))
-
-    # Load model parameters
-    subtask("Restoring state from {}".format(m.name))
-    m.seek(0)
-    formatver = pickle.load(m)
-    if type(formatver) != int:
-        formatver = 0
-        m.seek(0)
-
-    # Load parameters
-    state = pickle.load(m)
-    pickle.load(m) # epoch
-    pickle.load(m) # training
-    pickle.load(m) # validation
-    # Restore parameter values
-    fileparams = saveparams if formatver >= 1 else params
-    assert len(fileparams) == len(state)
-    for p, v in zip(fileparams, state):
-        p.set_value(v)
-
-    ni += 1
+    model = Model(args.network[ni], m.name)
+    networks.append(model.eval_fn())
+    cropsz.append(model.cropsz)
 
 def iterate_minibatches(inputs):
     global args
@@ -123,39 +64,30 @@ predictions = numpy.zeros((len(X_test), 5))
 test_batches = len(range(0, cases, args.batchsize))
 p = progress(test_batches)
 i = 0
-_preds = None
-if args.combine:
-    _preds = numpy.zeros((len(flips)*len(crops)*len(crops)*len(networks), args.batchsize, cats))
+_preds = numpy.zeros((2*3*3*len(networks), args.batchsize, cats))
 
 for inp in iterate_minibatches(X_test):
     s = i * args.batchsize
     if s + args.batchsize > predictions.shape[0]:
         inp = inp[:predictions.shape[0] - s]
 
-    if not args.combine:
-        # center crop
-        predictions[s:s+len(inp), :] = numpy.argsort(networks[0](inp[:, :, center:center+cropsz, center:center+cropsz])[0])[:, -5:][:, ::-1]
-    else:
-        config = 0
-        _preds.fill(0)
-        for flip in flips:
-            for xcrops in crops:
-                if flip:
-                    xcrop = slice(xcrops+cropsz-1, None if xcrops == 0 else xcrops-1, -1)
-                else:
-                    xcrop = slice(xcrops, xcrops+cropsz)
+    config = 0
+    _preds.fill(0)
+    for ni, network in enumerate(networks):
+        for flip in [-1, 1]:
+            sz = cropsz[ni]
+            edge = imsz - sz
+            center = edge // 2
+            for xcrop in [0, center, edge]:
+                for ycrop in [0, center, edge]:
+                    _preds[config, :len(inp), :] = network(
+                            inp, flip, (ycrop, xcrop))[0]
+                    config += 1
 
-                for ycrop in crops:
-                    cropped = inp[:, :, ycrop:ycrop+cropsz, xcrop]
-
-                    for network in networks:
-                        _preds[config, :len(inp), :] = network(cropped)[0]
-                        config += 1
-
-        # take median across configurations
-        # pick top 5 categories
-        # last category is highest probability
-        predictions[s:s+len(inp), :] = numpy.argsort(numpy.median(_preds, axis=0))[:len(inp), -5:][:, ::-1]
+    # take median across configurations
+    # pick top 5 categories
+    # last category is highest probability
+    predictions[s:s+len(inp), :] = numpy.argsort(numpy.median(_preds, axis=0))[:len(inp), -5:][:, ::-1]
 
     i += 1
     p.update(i)
