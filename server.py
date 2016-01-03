@@ -111,21 +111,41 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     <p>$name
     <p>Shape: ${result.shape}
     <p>${{
-      if len(result.shape) == 4 and result.shape[2] > 1:
+      if name == 'softmax':
+        out.append('<p>')
+        sorted = []
         for i in range(result.shape[1]):
-          out.append(self.image_for_array(result[0, i]))
+          cat = mp.catname(i)
+          sorted.append((result[0, i], cat))
+        sorted.sort()
+        out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
+      elif len(result.shape) == 4 and result.shape[2] > 1:
+        for i in range(result.shape[1]):
+          data = result[0, i]
+          out.append("<p>{}_{}<br>".format(name, i))
+          out.append("Std: {}<br>".format(numpy.std(data)))
+          out.append("Min: {}<br>".format(numpy.min(data)))
+          out.append("Mean: {}<br>".format(numpy.mean(data)))
+          out.append("Max: {}<br>".format(numpy.max(data)))
+          out.append(self.image_for_array(data))
       else:
-        out.append(numpy.array_str(result.flatten()))
+        out.append('<p>')
+        sorted = []
+        for i in range(result.shape[1]):
+          data = result[0, i, 0, 0]
+          sorted.append((data, '{}_{}'.format(name, i)))
+        sorted.sort()
+        out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
     }}
 
     """
 
   def image_for_array(self, arr):
-    im = scipy.misc.toimage(arr)
+    im = scipy.misc.toimage(arr, cmin=-0.5, cmax=0.5)
     png_buffer = BytesIO()
     im.save(png_buffer, format="PNG")
     b64 = base64.b64encode(png_buffer.getvalue()).decode('ascii')
-    return '<img src="data:img/png;base64,{}">'.format(b64)
+    return '<img height=113 src="data:img/png;base64,{}">'.format(b64)
 
   def translate_path_into_dir(self, subdir, trim, path):
     path = posixpath.normpath(urllib.parse.unquote(path))
