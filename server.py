@@ -47,10 +47,13 @@ class MiniPlacesData:
     return self._categories.name(cat)
 
 miniplaces = MiniPlacesData('mp-dev_kit')
-model = Model('see', 'exp-see-1/epoch-024.mdl')
+models = {
+  'see1': Model('see', 'exp-see-1/epoch-024.mdl'),
+  'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
+}
 
 # force a compile on startup
-debug_fn = model.debug_fn()
+# debug_fn = models[0].debug_fn()
 
 class Classification:
   def __init__(self, model, imgpath):
@@ -67,10 +70,10 @@ class ClassificationCache:
   def __init__(self):
     self._cache = {}
 
-  def lookup(self, imgpath):
+  def lookup(self, modelname, imgpath):
     if imgpath not in self._cache:
-      self._cache[imgpath] = Classification(model, imgpath)  
-    return self._cache[imgpath]
+      self._cache[(modelname, imgpath)] = Classification(models[modelname], imgpath)  
+    return self._cache[(modelname, imgpath)]
 
 cache = ClassificationCache()
 
@@ -82,10 +85,10 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     super().do_GET()
 
   def do_info(self):
-    imgpath = self.path[6:]
+    [_, _, modelname, imgpath] = self.path.split('/', 3)
     label = miniplaces.label(imgpath)
     cat = miniplaces.catname(label)
-    cl = cache.lookup(imgpath)
+    cl = cache.lookup(modelname, imgpath)
     
     self.send_response(200)
     self.send_header("Content-type", "text/html")
