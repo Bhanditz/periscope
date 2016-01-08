@@ -15,6 +15,7 @@ setup(
         'Lasagne == 0.2.dev1',
         'numpy',
         'pillow',
+        'python-templet',
         'progressbar2',
         'matplotlib',
         'seaborn',

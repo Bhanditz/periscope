@@ -11,6 +11,7 @@ from io import BytesIO
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from templet import templet
 from model import Model
+from PIL import Image
 
 class TextMap:
   def __init__(self, filename, trim=0):
@@ -45,8 +46,8 @@ class MiniPlacesData:
   def catname(self, cat):
     return self._categories.name(cat)
 
-mp = MiniPlacesData('mp-dev_kit')
-model = Model('gee', 'exp-gee-9/epoch-021.mdl')
+miniplaces = MiniPlacesData('mp-dev_kit')
+model = Model('see', 'exp-see-1/epoch-024.mdl')
 
 # force a compile on startup
 debug_fn = model.debug_fn()
@@ -59,8 +60,8 @@ class Classification:
             scipy.ndimage.imread(path), [2, 0, 1]) / 255.0
     results = model.debug_fn()(numpy.expand_dims(self.image, axis=0))
     self.results = []
-    for i, name in enumerate(model.layer_names()):
-        self.results.append((name, results[i]))
+    for i, layer in enumerate(model.named_layers()):
+        self.results.append((layer, results[i]))
 
 class ClassificationCache:
   def __init__(self):
@@ -82,8 +83,8 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
 
   def do_info(self):
     imgpath = self.path[6:]
-    label = mp.label(imgpath)
-    cat = mp.catname(label)
+    label = miniplaces.label(imgpath)
+    cat = miniplaces.catname(label)
     cl = cache.lookup(imgpath)
     
     self.send_response(200)
@@ -96,56 +97,90 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
   def info_template(self, imgpath, label, cat, cl):
     """\
     <html>
+    <style>
+    img { image-rendering: pixelated; margin:1px; }
+    </style>
     <body>
     <img src="/img/$imgpath">
     <p>Category: $cat
     <p>Layers
-    ${[self.raw_layer_template(name, result) for name, result in cl.results]}
+    ${[self.raw_layer_template(layer, result) for layer, result in cl.results]}
     </body>
     </html>
     """
 
   @templet
-  def raw_layer_template(self, name, result):
+  def raw_layer_template(self, layer, result):
     """\
-    <p>$name
+    <p>${layer.name}
     <p>Shape: ${result.shape}
     <p>${{
-      if name == 'softmax':
+      if layer.name == 'softmax':
+        out.append('<p>')
+        out.append(numpy.array_str(layer.W.get_value()))
         out.append('<p>')
         sorted = []
         for i in range(result.shape[1]):
-          cat = mp.catname(i)
+          cat = miniplaces.catname(i)
           sorted.append((result[0, i], cat))
         sorted.sort()
         out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
-      elif len(result.shape) == 4 and result.shape[2] > 1:
+      elif layer.name == 'input':
         for i in range(result.shape[1]):
           data = result[0, i]
-          out.append("<p>{}_{}<br>".format(name, i))
-          out.append("Std: {}<br>".format(numpy.std(data)))
-          out.append("Min: {}<br>".format(numpy.min(data)))
-          out.append("Mean: {}<br>".format(numpy.mean(data)))
-          out.append("Max: {}<br>".format(numpy.max(data)))
-          out.append(self.image_for_array(data))
+          out.append(self.image_for_array(data, cmin=0, cmax=1,
+               title="{}_{}".format(layer.name, i)))
+      elif len(result.shape) == 4 and result.shape[2] > 1:
+        out.append('<p>Prelu alpha mean: ')
+        out.append(str(numpy.mean(layer.prelu.alpha.get_value())))
+        out.append('<br>')
+        out.append('<p>BN mean and inv_std: ')
+        out.append(str(numpy.mean(layer.bn.mean.get_value())))
+        out.append(', ')
+        out.append(str(numpy.mean(layer.bn.inv_std.get_value())))
+        out.append('<br>')
+        for i in range(result.shape[1]):
+          data = result[0, i]
+          data = (data - layer.bn.mean.get_value()[i]) * layer.bn.inv_std.get_value()[i]
+          # out.append("<p>{}_{}<br>".format(layer.name, i))
+          # out.append("Std: {}<br>".format(numpy.std(data)))
+          # out.append("Min: {}<br>".format(numpy.min(data)))
+          # out.append("Mean: {}<br>".format(numpy.mean(data)))
+          # out.append("Max: {}<br>".format(numpy.max(data)))
+          out.append(self.image_for_array(data,
+               title="{}_{}".format(layer.name, i)))
       else:
         out.append('<p>')
+        out.append(numpy.array_str(layer.W.get_value()))
+        out.append(numpy.array_str(layer.prelu.alpha.get_value()))
+        out.append('<p>Prelu alpha mean: ')
+        out.append(str(numpy.mean(layer.prelu.alpha.get_value())))
+        out.append('<p>')
         sorted = []
+        result = numpy.array(result)
         for i in range(result.shape[1]):
           data = result[0, i, 0, 0]
-          sorted.append((data, '{}_{}'.format(name, i)))
+          sorted.append((data, '{}_{}'.format(layer.name, i)))
         sorted.sort()
         out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
     }}
 
     """
 
-  def image_for_array(self, arr):
-    im = scipy.misc.toimage(arr, cmin=-0.5, cmax=0.5)
+  def image_for_array(self, arr, cmin=0, cmax=2, cneg=-4, title=""):
+    imb = scipy.misc.bytescale(arr, cmin=cmin, cmax=cmax)
+    imo = scipy.misc.bytescale(arr, cmin=cmax, cmax=cmax*2)
+    imn = scipy.misc.bytescale(-arr, cmin=-cmin, cmax=-cneg)
+    im3 = numpy.repeat(numpy.expand_dims(imb, axis=2), 3, axis=2)
+    im3[:,:,0] += imn
+    im3[:,:,2] -= imo
+    im = Image.frombytes('RGB', (im3.shape[1], im3.shape[0]), im3.tostring())
+    # im = scipy.misc.toimage(arr, cmin=cmin, cmax=cmax)
     png_buffer = BytesIO()
     im.save(png_buffer, format="PNG")
     b64 = base64.b64encode(png_buffer.getvalue()).decode('ascii')
-    return '<img height=113 src="data:img/png;base64,{}">'.format(b64)
+    return '<img height=113 src="data:img/png;base64,{}" title="{}">'.format(
+        b64, title)
 
   def translate_path_into_dir(self, subdir, trim, path):
     path = posixpath.normpath(urllib.parse.unquote(path))
