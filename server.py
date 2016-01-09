@@ -52,7 +52,8 @@ models = {
   'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
   'bal': Model('bal', 'exp-bal/epoch-009.mdl'),
   'con': Model('con', 'exp-con/epoch-001.mdl'),
-  'norm': Model('norm', 'exp-norm/epoch-009.mdl'),
+  'norm': Model('norm', 'exp-norm/epoch-015.mdl'),
+  'uni': Model('uni', 'exp-uni-1/epoch-027.mdl'),
 }
 
 # force a compile on startup
@@ -220,7 +221,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     imo = scipy.misc.bytescale(arr, cmin=cmax, cmax=cmax*2)
     imn = scipy.misc.bytescale(-arr, cmin=-cmin, cmax=-cneg)
     im3 = numpy.repeat(numpy.expand_dims(imb, axis=2), 3, axis=2)
-    im3[:,:,0] += imn
+    im3[:,:,2] += imn
     im3[:,:,2] -= imo
     im = Image.frombytes('RGB', (im3.shape[1], im3.shape[0]), im3.tostring())
     # im = scipy.misc.toimage(arr, cmin=cmin, cmax=cmax)

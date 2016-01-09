@@ -451,16 +451,16 @@ def con(network, cropsz, batchsz):
 
 con.cropsz = 113
 
-def norm_gadget(network_in, normv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, normv_add // 2, (1, 1),
+def norm_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
         W=HeNormal(1.372), name=name+'i')
     network_c = apply_prelu_bn_bal(network_c)
-    normv = network_c = Conv2DLayer(network_c, normv_add, (3, 3),
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
         stride=stride, pad=pad, name=name,
         W=HeNormal(1.372))
     network_c = apply_prelu_bn_bal(network_c)
-    normv.bn.name = name + 'b'
-    normv.prelu.name = name + 'p'
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = BatchNormLayer(network_p, beta=None, gamma=None)
     return ConcatLayer((network_c, network_p), name=name + 'c')
@@ -471,7 +471,7 @@ def norm(network, cropsz, batchsz):
     # 1st. Data size 113 -> 111
     # 113*113*32 = 408608, rf:3x3
     network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="normv1")
+        W=HeNormal(1.372), name="conv1")
     network = apply_prelu_bn_bal(network)
     # 2nd. Data size 111 -> 55
     # 55*55*64 = 193600, rf:5x5
@@ -491,7 +491,7 @@ def norm(network, cropsz, batchsz):
     # 4th.  Data size 13 -> 11
     # 11*11*128 = 15488, rf:33x33
     network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="normv5")
+        W=HeNormal(1.372), name="conv5")
     network = apply_prelu_bn_bal(network)
 
     # 5th. Data size 11 -> 5
@@ -512,3 +512,138 @@ def norm(network, cropsz, batchsz):
     return network
 
 norm.cropsz = 113
+
+def free_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_bal(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_bal(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = BatchNormLayer(network_p, gamma=None)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def free(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_bal(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = free_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = free_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = free_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_bal(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = free_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = free_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = free_gadget(network, 512, name="goo8")
+
+    return network
+
+free.cropsz = 113
+
+def apply_prelu_bn_uni(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = BatchNormLayer(layer, beta=None, gamma=None)
+    out = layer.prelu = ParametricRectifierLayer(bn)
+    return out
+
+def uni_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = BatchNormLayer(network_p, beta=None, gamma=None)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def uni(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_uni(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = uni_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = uni_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = uni_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_uni(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = uni_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = uni_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = uni_gadget(network, 512, name="goo8")
+
+    return network
+
+uni.cropsz = 113
