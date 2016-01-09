@@ -50,6 +50,9 @@ miniplaces = MiniPlacesData('mp-dev_kit')
 models = {
   'see1': Model('see', 'exp-see-1/epoch-024.mdl'),
   'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
+  'bal': Model('bal', 'exp-bal/epoch-009.mdl'),
+  'con': Model('con', 'exp-con/epoch-001.mdl'),
+  'norm': Model('norm', 'exp-norm/epoch-009.mdl'),
 }
 
 # force a compile on startup
@@ -107,67 +110,109 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     <img src="/img/$imgpath">
     <p>Category: $cat
     <p>Layers
-    ${[self.raw_layer_template(layer, result) for layer, result in cl.results]}
+    ${[self.layer_template(layer, result) for layer, result in cl.results]}
     </body>
     </html>
     """
 
   @templet
-  def raw_layer_template(self, layer, result):
+  def layer_template(self, layer, result):
     """\
     <p>${layer.name}
     <p>Shape: ${result.shape}
-    <p>${{
-      if layer.name == 'softmax':
-        out.append('<p>')
-        out.append(numpy.array_str(layer.W.get_value()))
-        out.append('<p>')
-        sorted = []
-        for i in range(result.shape[1]):
-          cat = miniplaces.catname(i)
-          sorted.append((result[0, i], cat))
-        sorted.sort()
-        out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
-      elif layer.name == 'input':
-        for i in range(result.shape[1]):
-          data = result[0, i]
-          out.append(self.image_for_array(data, cmin=0, cmax=1,
-               title="{}_{}".format(layer.name, i)))
-      elif len(result.shape) == 4 and result.shape[2] > 1:
-        out.append('<p>Prelu alpha mean: ')
-        out.append(str(numpy.mean(layer.prelu.alpha.get_value())))
-        out.append('<br>')
-        out.append('<p>BN mean and inv_std: ')
-        out.append(str(numpy.mean(layer.bn.mean.get_value())))
-        out.append(', ')
-        out.append(str(numpy.mean(layer.bn.inv_std.get_value())))
-        out.append('<br>')
-        for i in range(result.shape[1]):
-          data = result[0, i]
-          data = (data - layer.bn.mean.get_value()[i]) * layer.bn.inv_std.get_value()[i]
-          # out.append("<p>{}_{}<br>".format(layer.name, i))
-          # out.append("Std: {}<br>".format(numpy.std(data)))
-          # out.append("Min: {}<br>".format(numpy.min(data)))
-          # out.append("Mean: {}<br>".format(numpy.mean(data)))
-          # out.append("Max: {}<br>".format(numpy.max(data)))
-          out.append(self.image_for_array(data,
-               title="{}_{}".format(layer.name, i)))
-      else:
-        out.append('<p>')
-        out.append(numpy.array_str(layer.W.get_value()))
-        out.append(numpy.array_str(layer.prelu.alpha.get_value()))
-        out.append('<p>Prelu alpha mean: ')
-        out.append(str(numpy.mean(layer.prelu.alpha.get_value())))
-        out.append('<p>')
-        sorted = []
-        result = numpy.array(result)
-        for i in range(result.shape[1]):
-          data = result[0, i, 0, 0]
-          sorted.append((data, '{}_{}'.format(layer.name, i)))
-        sorted.sort()
-        out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
-    }}
+    ${self.layer_details(layer, result)}
+    """
 
+  def layer_details(self, layer, result):
+    if layer.name == 'softmax':
+      return self.softmax_details(layer, result)
+    elif layer.name == 'input':
+      return self.input_details(layer, result)
+    elif len(result.shape) == 4 and result.shape[2] > 1:
+      if hasattr(layer, 'prelu') and hasattr(layer, 'bn'):
+        return self.conv_details(layer, result)
+      return '<p>' + self.conv_images(layer, result)
+    else:
+      if hasattr(layer, 'prelu') and hasattr(layer, 'bn'):
+        return self.fc_details(layer, result)
+    return '<p>' + layer.name
+
+  @templet
+  def softmax_details(self, layer, result):
+    """\
+    <p>W shape ${layer.W.get_value().shape},
+    ${numpy.array_str(layer.W.get_value())}
+    <p>
+    ${{
+      input_layer = layer.input_layer
+      
+      sorted = []
+      for i in range(result.shape[1]):
+        cat = miniplaces.catname(i)
+        sorted.append((result[0, i], cat))
+      sorted.sort()
+      out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
+    }}
+    """
+
+  def input_details(self, layer, result):
+    out = ['<p>']
+    for i in range(result.shape[1]):
+      data = result[0, i]
+      out.append(self.image_for_array(data, cmin=0, cmax=1,
+          title="{}_{}".format(layer.name, i)))
+    return ''.join(out)
+
+  @templet
+  def conv_details(self, layer, result):
+    """\
+    <p>Prelu alpha mean: ${numpy.mean(layer.prelu.alpha.get_value())}<br>
+    BN mean: ${numpy.mean(layer.bn.mean.get_value())},
+    BN inv_std ${numpy.mean(layer.bn.inv_std.get_value())}<br>
+    ${self.conv_images(layer, result)}
+    """
+
+  @templet
+  def conv_images(self, layer, result):
+    """\
+    ${{
+      result = numpy.array(result)
+      out.append('First image shape {}<br>'.format(result[0, 0].shape))
+      out.append('First pixel {}<br>'.format(result[0, 0, 0, 0]))
+      if hasattr(layer, 'bn'):
+        out.append('First pix bnm{} bnis{} normed{}<br>'.format(
+            layer.bn.mean.get_value()[0],
+            layer.bn.inv_std.get_value()[0],
+            (result[0, 0, 0, 0] -
+            layer.bn.mean.get_value()[0]) *
+            layer.bn.inv_std.get_value()[0]))
+      for i in range(result.shape[1]):
+        data = result[0, i]
+        if hasattr(layer, 'bn'):
+          data = data - layer.bn.mean.get_value()[i]
+          data = data * layer.bn.inv_std.get_value()[i]
+        out.append(self.image_for_array(data,
+               title="{}_{}".format(layer.name, i)))
+    }}
+    """
+
+  @templet
+  def fc_details(self, layer, result):
+    """\
+    <p>${numpy.array_str(layer.W.get_value())}<br>
+    ${numpy.array_str(layer.prelu.alpha.get_value())}
+    <p>Prelu alpha mean: ${numpy.mean(layer.prelu.alpha.get_value())}<br>
+    BN mean: ${numpy.mean(layer.bn.mean.get_value())},
+    BN inv_std ${numpy.mean(layer.bn.inv_std.get_value())}<br>
+    ${{
+      sorted = []
+      result = numpy.array(result)
+      for i in range(result.shape[1]):
+        data = result[0, i, 0, 0]
+        sorted.append((data, '{}_{}'.format(layer.name, i)))
+      sorted.sort()
+      out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
+    }}
     """
 
   def image_for_array(self, arr, cmin=0, cmax=2, cneg=-4, title=""):
