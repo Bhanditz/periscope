@@ -54,6 +54,8 @@ models = {
   'con': Model('con', 'exp-con/epoch-001.mdl'),
   'norm': Model('norm', 'exp-norm/epoch-015.mdl'),
   'uni': Model('uni', 'exp-uni-1/epoch-027.mdl'),
+  'pos': Model('pos', 'exp-pos/epoch-022.mdl'),
+  'vis': Model('vis', 'exp-vis/epoch-004.mdl'),
 }
 
 # force a compile on startup

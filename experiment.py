@@ -5,10 +5,10 @@ from lasagne.init import HeUniform, HeNormal
 from lasagne.layers import Layer
 from lasagne.layers import DropoutLayer, FeaturePoolLayer, ConcatLayer, prelu
 from lasagne.layers import DenseLayer, ReshapeLayer, SliceLayer
-from lasagne.layers import ParametricRectifierLayer
+from lasagne.layers import ParametricRectifierLayer, NonlinearityLayer
 from lasagne.layers import get_output_shape
 from lasagne.layers.normalization import BatchNormLayer
-from lasagne.nonlinearities import rectify, softmax, identity
+from lasagne.nonlinearities import rectify, softmax, identity, LeakyRectify
 Conv2DLayer = lasagne.layers.Conv2DLayer
 MaxPool2DLayer = lasagne.layers.MaxPool2DLayer
 Pool2DLayer = lasagne.layers.Pool2DLayer
@@ -647,3 +647,544 @@ def uni(network, cropsz, batchsz):
     return network
 
 uni.cropsz = 113
+
+class PosGrayLayer(Layer):
+    def get_output_shape_for(self, input_shape):
+        return input_shape
+
+    def get_output_for(self, input, **kwargs):
+        return input * 0.5 + 0.5
+
+def pos_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = BatchNormLayer(network_p, beta=None, gamma=None)
+    network_p = PosGrayLayer(network_p)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def pos(network, cropsz, batchsz):
+    network = ZeroCenterLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_uni(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = pos_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = pos_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = pos_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_uni(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = pos_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = pos_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = pos_gadget(network, 512, name="goo8")
+
+    return network
+
+pos.cropsz = 113
+
+class ZeroCenterLayer(Layer):
+    def get_output_shape_for(self, input_shape):
+        return input_shape
+
+    def get_output_for(self, input, **kwargs):
+        return (input - 0.5) * 2
+
+def zee_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    network_c = ZeroCenterLayer(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = BatchNormLayer(network_p, beta=None, gamma=None)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def zee(network, cropsz, batchsz):
+    network = ZeroCenterLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_uni(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = zee_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = zee_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = zee_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_uni(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = zee_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = zee_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = zee_gadget(network, 512, name="goo8")
+
+    return network
+
+zee.cropsz = 113
+
+class BatchNormScaleLayer(Layer):
+    def __init__(self, incoming,
+                 axes='auto', epsilon=1e-4, alpha=0.1,
+                 mode='low_mem', std=1.0,
+                 inv_std=lasagne.init.Constant(1), **kwargs):
+        super(BatchNormScaleLayer, self).__init__(incoming, **kwargs)
+
+        if axes == 'auto':
+            # default: normalize over all but the second axis
+            axes = (0,) + tuple(range(2, len(self.input_shape)))
+        elif isinstance(axes, int):
+            axes = (axes,)
+        self.axes = axes
+
+        self.epsilon = epsilon
+        self.alpha = alpha
+        self.std = std
+        self.mode = mode
+
+        # create parameters, ignoring all dimensions in axes
+        shape = [size for axis, size in enumerate(self.input_shape)
+                 if axis not in self.axes]
+        if any(size is None for size in shape):
+            raise ValueError("BatchNormLayer needs specified input sizes for "
+                             "all axes not normalized over.")
+        self.inv_std = self.add_param(inv_std, shape, 'inv_std',
+                                      trainable=False, regularizable=False)
+
+    def get_output_for(self, input, deterministic=False, **kwargs):
+        input_inv_std = theano.tensor.inv(theano.tensor.sqrt(
+                theano.tensor.sqr(input).mean(axis=self.axes) + self.epsilon))
+
+        # Decide whether to use the stored averages or mini-batch statistics
+        use_averages = kwargs.get('batch_norm_use_averages',
+                                  deterministic)
+        if use_averages:
+            inv_std = self.inv_std
+        else:
+            inv_std = input_inv_std
+
+        # Decide whether to update the stored averages
+        update_averages = kwargs.get('batch_norm_update_averages',
+                                     not deterministic)
+        if update_averages:
+            # Trick: To update the stored statistics, we create memory-aliased
+            # clones of the stored statistics:
+            running_inv_std = theano.clone(self.inv_std, share_inputs=False)
+            # set a default update for them:
+            running_inv_std.default_update = ((1 - self.alpha) *
+                                              running_inv_std +
+                                              self.alpha * input_inv_std)
+            # and make sure they end up in the graph without participating in
+            # the computation (this way their default_update will be collected
+            # and applied, but the computation will be optimized away):
+            inv_std += 0 * running_inv_std
+
+        # prepare dimshuffle pattern inserting broadcastable axes as needed
+        param_axes = iter(range(input.ndim - len(self.axes)))
+        pattern = ['x' if input_axis in self.axes
+                   else next(param_axes)
+                   for input_axis in range(input.ndim)]
+
+        # apply dimshuffle pattern to all parameters
+        inv_std = inv_std.dimshuffle(pattern)
+
+        # normalize
+        normalized = input * inv_std * self.std
+        return normalized
+
+class QuickNormLayer(Layer):
+    def __init__(self, incoming,
+                 axes='auto', epsilon=1e-4, alpha=0.1,
+                 mode='low_mem',
+                 mean=lasagne.init.Constant(0),
+                 inv_std=lasagne.init.Constant(1), **kwargs):
+        super(QuickNormLayer, self).__init__(incoming, **kwargs)
+
+        if axes == 'auto':
+            # default: normalize over all but the second axis
+            axes = (0,) + tuple(range(2, len(self.input_shape)))
+        elif isinstance(axes, int):
+            axes = (axes,)
+        self.axes = axes
+
+        self.epsilon = epsilon
+        self.alpha = alpha
+        self.mode = mode
+
+        # create parameters, ignoring all dimensions in axes
+        shape = [size for axis, size in enumerate(self.input_shape)
+                 if axis not in self.axes]
+        if any(size is None for size in shape):
+            raise ValueError("QuickNormLayer needs specified input sizes for "
+                             "all axes not normalized over.")
+        self.mean = self.add_param(inv_std, shape, 'mean',
+                                      trainable=False, regularizable=False)
+        self.inv_std = self.add_param(inv_std, shape, 'inv_std',
+                                      trainable=False, regularizable=False)
+
+    def get_output_for(self, input, deterministic=False, **kwargs):
+        input_mean = input.mean(self.axes)
+        input_inv_std = theano.tensor.inv(theano.tensor.sqrt(
+                input.var(self.axes) + self.epsilon))
+
+        # Decide whether to use the stored averages or mini-batch statistics
+        use_averages = kwargs.get('batch_norm_use_averages',
+                                  deterministic)
+        if use_averages:
+            mean = self.mean
+            inv_std = self.inv_std
+        else:
+            mean = input_mean
+            inv_std = input_inv_std
+
+        # Decide whether to update the stored averages
+        update_averages = kwargs.get('batch_norm_update_averages',
+                                     not deterministic)
+        if update_averages:
+            # Trick: To update the stored statistics, we create memory-aliased
+            # clones of the stored statistics:
+            running_mean = theano.clone(self.mean, share_inputs=False)
+            running_inv_std = theano.clone(self.inv_std, share_inputs=False)
+            # set a default update for them:
+            running_mean.default_update = ((1 - self.alpha) * running_mean +
+                                           self.alpha * input_mean)
+            running_inv_std.default_update = ((1 - self.alpha) *
+                                              running_inv_std +
+                                              self.alpha * input_inv_std)
+            # and make sure they end up in the graph without participating in
+            # the computation (this way their default_update will be collected
+            # and applied, but the computation will be optimized away):
+            mean += 0 * running_mean
+            inv_std += 0 * running_inv_std
+
+        # prepare dimshuffle pattern inserting broadcastable axes as needed
+        param_axes = iter(range(input.ndim - len(self.axes)))
+        pattern = ['x' if input_axis in self.axes
+                   else next(param_axes)
+                   for input_axis in range(input.ndim)]
+
+        # apply dimshuffle pattern to all parameters
+        mean = mean.dimshuffle(pattern)
+        inv_std = inv_std.dimshuffle(pattern)
+
+        # normalize
+        normalized = (input - mean) * inv_std
+        return normalized
+
+
+def vis_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = BatchNormScaleLayer(network_p)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def vis(network, cropsz, batchsz):
+    network = ZeroCenterLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_uni(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = vis_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = vis_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = vis_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_uni(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = vis_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = vis_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = vis_gadget(network, 512, name="goo8")
+
+    return network
+
+vis.cropsz = 113
+
+def vie_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = apply_prelu_bn_uni(network_p)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def vie(network, cropsz, batchsz):
+    network = ZeroCenterLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_uni(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = vie_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = vie_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = vie_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_uni(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = vie_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = vie_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = vie_gadget(network, 512, name="goo8")
+
+    return network
+
+vie.cropsz = 113
+
+def apply_bn_leaky(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = BatchNormLayer(layer, beta=None, gamma=None)
+    out = layer.prelu = NonlinearityLayer(bn, LeakyRectify(0.25))
+    return out
+
+def vial_gadget(network_in, conv_add, stride=1, pad=0, norm=None, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = norm(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = norm(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = norm(network_p)
+    return ConcatLayer((network_c, network_p), name=name + 'c')
+
+def vial_type_network(network, cropsz, batchsz, norm, gadget):
+    network = ZeroCenterLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = norm(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = gadget(network, 32, stride=2, norm=norm, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = gadget(network, 32, stride=2, norm=norm, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = gadget(network, 128, stride=2, norm=norm, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = norm(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = gadget(network, 128, stride=2, norm=norm, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = gadget(network, 128, norm=norm, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = gadget(network, 512, norm=norm, name="goo8")
+
+    return network
+
+def vial(network, cropsz, batchsz):
+    return vial_type_network(
+        network, cropsz, batchsz, apply_bn_leaky, vial_gadget)
+
+vial.cropsz = 113
+
+def apply_bn_rezero(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = QuickNormLayer(layer)
+    nl = layer.prelu = NonlinearityLayer(bn, LeakyRectify(0.25))
+    out = QuickNormLayer(nl)
+    return out
+
+def viaz(network, cropsz, batchsz):
+    return vial_type_network(
+        network, cropsz, batchsz, apply_bn_rezero, vial_gadget)
+
+viaz.cropsz = 113
+
+def apply_prelu_bn_zun(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = QuickNormLayer(layer)
+    pr = layer.prelu = ParametricRectifierLayer(bn)
+    out = QuickNormLayer(pr)
+    return out
+
+def zun_gadget(network_in, conv_add, stride=1, pad=0, name=None, norm=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_uni(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_uni(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network = ConcatLayer((network_c, network_p), name=name + 'c')
+    network = QuickNormLayer(network)
+    return network
+
+def zun(network, cropsz, batchsz):
+    return vial_type_network(
+        network, cropsz, batchsz, apply_prelu_bn_zun, zun_gadget)
+
+zun.cropsz = 113
