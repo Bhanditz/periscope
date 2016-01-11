@@ -41,7 +41,6 @@ if args.outdir is None:
 
 imsz = 128
 cropsz = 117
-learning_rates = numpy.logspace(-1.5, -4, 30, dtype=theano.config.floatX)
 
 section("Setup")
 task("Loading data")
@@ -63,6 +62,7 @@ if args.network not in experiment.__dict__:
 
 model = Model(args.network, None, batchsize=args.batchsize, cats=cats)
 cropsz = model.cropsz
+learning_rates = model.learning_rates
 subtask("parameter count {} ({} trainable)".format(
         lasagne.layers.count_params(model.network),
         lasagne.layers.count_params(model.network, trainable=True)))

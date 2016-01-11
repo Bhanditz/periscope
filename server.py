@@ -50,12 +50,9 @@ miniplaces = MiniPlacesData('mp-dev_kit')
 models = {
   'see1': Model('see', 'exp-see-1/epoch-024.mdl'),
   'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
-  'bal': Model('bal', 'exp-bal/epoch-009.mdl'),
-  'con': Model('con', 'exp-con/epoch-001.mdl'),
-  'norm': Model('norm', 'exp-norm/epoch-015.mdl'),
   'uni': Model('uni', 'exp-uni-1/epoch-027.mdl'),
-  'pos': Model('pos', 'exp-pos/epoch-022.mdl'),
-  'vis': Model('vis', 'exp-vis/epoch-004.mdl'),
+  'unq': Model('unq', 'exp-unq/epoch-029.mdl'),
+  'ren': Model('ren', 'exp-ren/epoch-010.mdl'),
 }
 
 # force a compile on startup
@@ -95,12 +92,16 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     label = miniplaces.label(imgpath)
     cat = miniplaces.catname(label)
     cl = cache.lookup(modelname, imgpath)
-    
+
+    self.results = cl.results
     self.send_response(200)
     self.send_header("Content-type", "text/html")
     self.end_headers()    
     self.wfile.write(self.info_template(
         imgpath, label, cat, cl).encode('utf-8'))
+
+  def result_for_layer(self, name):
+    return [result for layer, result in self.results if layer.name == name][0]
 
   @templet
   def info_template(self, imgpath, label, cat, cl):
@@ -145,6 +146,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     """\
     <p>W shape ${layer.W.get_value().shape},
     ${numpy.array_str(layer.W.get_value())}
+    <p>Goo8c ${numpy.array_str(self.result_for_layer('goo8c'))}
     <p>
     ${{
       input_layer = layer.input_layer

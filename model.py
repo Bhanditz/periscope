@@ -16,13 +16,19 @@ class Model:
         self.network_fn = experiment.__dict__[network]
         self.cropsz = 117
         self.batchsize = 256
+        self.l2reg = 1e-3
         self.cats = cats
+        self.learning_rates = numpy.logspace(-1.5, -4, 30, dtype=numpy.float32)
         self._eval_fn = None
         self._train_fn = None
         self._acc_fn = None
         self._debug_fn = None
         if hasattr(self.network_fn, 'cropsz'):
             self.cropsz = self.network_fn.cropsz
+        if hasattr(self.network_fn, 'l2reg'):
+            self.l2reg = self.network_fn.l2reg
+        if hasattr(self.network_fn, 'learning_rates'):
+            self.learning_rates = self.network_fn.learning_rates
         if batchsize is not None:
             self.batchsize = batchsize
         self.state = None
@@ -77,7 +83,7 @@ class Model:
         from lasagne.regularization import regularize_network_params, l2
         loss = lasagne.objectives.categorical_crossentropy(
                 train_prediction, self.target_var).mean()
-        loss += regularize_network_params(network, l2) * 1e-3
+        loss += regularize_network_params(network, l2) * self.l2reg
         self.train_loss = loss
         # create parameter update expressions
         params = lasagne.layers.get_all_params(network, trainable=True)
