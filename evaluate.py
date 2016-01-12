@@ -81,14 +81,14 @@ for inp in iterate_minibatches(X_test):
             for xcrop in [0, center, edge]:
                 for ycrop in [0, center, edge]:
                     _preds[config, :len(inp), :] = network(
-                            inp, flip, (ycrop, xcrop))[0]
+                            inp, flip, (ycrop, xcrop))
                     config += 1
 
     # take median across configurations
     # pick top 5 categories
     # last category is highest probability
-    predictions[s:s+len(inp), :] = numpy.argsort(numpy.median(_preds, axis=0))[:len(inp), -5:][:, ::-1]
-
+    avgscore = numpy.median(_preds, axis=0)
+    predictions[s:s+len(inp), :] = numpy.argsort(avgscore)[:len(inp), -5:][:, ::-1]
     i += 1
     p.update(i)
 
