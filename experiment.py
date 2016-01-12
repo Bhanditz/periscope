@@ -650,9 +650,87 @@ ren.cropsz = 113
 ren.l2reg = 1e-2
 ren.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
 
+class PosShiftLayer(Layer):
+    def get_output_shape_for(self, input_shape):
+        return input_shape
+
+    def get_output_for(self, input, **kwargs):
+        return (input * 0.5) + 0.5
+
+def apply_prelu_bn_reno(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = QuickNormLayer(layer)
+    out = layer.prelu = ParametricRectifierLayer(bn)
+    # out = ZeroPreluLayer(out)
+    return out
+
+def reno_gadget(network_in, conv_add, stride=1, pad=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_reno(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_reno(network_c)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'p'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = QuickNormLayer(network_p)
+    network_p = PosShiftLayer(network_p)
+    return ConcatLayer((network_p, network_c), name=name + 'c')
+
 def reno(network, cropsz, batchsz):
-    return ren(network, cropsz, batchsz)
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 113 -> 111
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.372), name="conv1")
+    network = apply_prelu_bn_reno(network)
+    # 2nd. Data size 111 -> 55
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = reno_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 55 -> 27
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = reno_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 27 -> 13, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = reno_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 13 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3),
+        W=HeNormal(1.372), name="conv5")
+    network = apply_prelu_bn_reno(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = reno_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = reno_gadget(network, 128, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = reno_gadget(network, 512, name="goo8")
+
+    return network
+
 reno.cropsz = 113
-reno.l2reg = 2e-2
+reno.l2reg = 1e-2
 reno.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
 

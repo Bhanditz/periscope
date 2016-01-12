@@ -52,7 +52,7 @@ models = {
   'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
   'uni': Model('uni', 'exp-uni-1/epoch-027.mdl'),
   'unq': Model('unq', 'exp-unq/epoch-029.mdl'),
-  'ren': Model('ren', 'exp-ren/epoch-010.mdl'),
+  'ren': Model('ren', 'exp-ren/epoch-029.mdl'),
 }
 
 # force a compile on startup
@@ -75,10 +75,109 @@ class ClassificationCache:
 
   def lookup(self, modelname, imgpath):
     if imgpath not in self._cache:
-      self._cache[(modelname, imgpath)] = Classification(models[modelname], imgpath)  
+      self._cache[(modelname, imgpath)] = Classification(
+          models[modelname], imgpath)  
     return self._cache[(modelname, imgpath)]
 
-cache = ClassificationCache()
+grid_slices = [
+    (slice(y, y+23), slice(x, x+23))
+    for x in range(0, 112, 7) for y in range(0, 112, 7)]
+
+# A clipping rectifier, pegging values less than t1 to 0 and more than t2 to 1.
+def peg(ar, t1, t2):
+    return numpy.clip((ar - t1) / (t2 - t1), 0, 1)
+
+def response_image(img, vec):
+    epsilon = 1e-6
+    avg = numpy.mean(vec)
+    std = numpy.std(vec)
+    respmax = avg + std
+    resp = numpy.clip((respmax - vec) / (2 * std + epsilon), 0, 1)
+    total = numpy.zeros(img.shape)
+    count = numpy.zeros(img.shape)
+    for i, s in enumerate(grid_slices):
+        total[(slice(None), s[0], s[1])] += resp[i]
+        count[(slice(None), s[0], s[1])] += 1
+    mask = total / count
+    mask = peg((mask - mask.mean()) / (mask.std() + epsilon), -0.2, 0.2)
+    masked = img * mask
+    im3 = scipy.misc.bytescale(
+        numpy.transpose(masked, [1, 2, 0]), cmin=0, cmax=1)
+    return rgbi_image(im3)
+
+def rgbi_image(im3, title=None):
+    if title is None:
+        attr = ''
+    else:
+        attr = ' title="{}"'.format(title)
+    height = im3.shape[1]
+    while height < 64:
+        height *= 2
+    png_buffer = BytesIO()
+    im = Image.frombytes('RGB', (im3.shape[1], im3.shape[0]), im3.tostring())
+    im.save(png_buffer, format="PNG")
+    b64 = base64.b64encode(png_buffer.getvalue()).decode('ascii')
+    return '<img height={} src="data:img/png;base64,{}"{}>'.format(
+        height, b64, attr)
+
+
+class ResponseProbe:
+  def __init__(self, model, imgpath):
+    self.model = model
+    path = os.path.join('mp-data/images', imgpath)
+    self.image = numpy.transpose(
+            scipy.ndimage.imread(path), [2, 0, 1]) / 255.0
+    self.probe = numpy.repeat(numpy.expand_dims(self.image, axis=0),
+            len(grid_slices), axis=0)
+    gray = numpy.ones((3, 23, 23)) * 0.5
+    for i, (sy, sx) in enumerate(grid_slices):
+        self.probe[(i, slice(0, 3), sy, sx)] = gray
+    results = model.debug_fn()(self.probe)
+    self.results = []
+    for i, layer in enumerate(model.named_layers()):
+        self.results.append((layer, results[i]))
+
+  def get_response_image(self, name, channel, y=0, x=0):
+    result = [r for (layer, r) in self.results if layer.name == name][0]
+    if len(result.shape) == 4:
+      vec = result[:,channel,y,x]
+    else:
+      vec = result[:,channel]
+    return response_image(self.image, vec)
+
+class ResponseProbeCache:
+  def __init__(self):
+    self._cache = {}
+
+  def lookup(self, modelname, imgpath):
+    if imgpath not in self._cache:
+      self._cache[(modelname, imgpath)] = ResponseProbe(
+          models[modelname], imgpath)  
+    return self._cache[(modelname, imgpath)]
+
+def extract_resp_region(resp):
+    avg = numpy.average(resp)
+    std = numpy.std(resp)
+    respmax = avg + std
+    respmin = avg - std
+    resp = numpy.minimum(
+            numpy.maximum((respmax - resp) /
+            (respmax - respmin + 1e-6), 0), 1)
+    smeared = numpy.zeros([128, 128])
+    smearedd = numpy.ones([128, 128]) * 0.01
+    # Some geometric parameters
+    res = 16
+    pix = 23
+    st = 7
+    for x in range(res):
+        for y in range(res):
+            smeared[y*st:y*st+pix, x*st:x*st+pix] += resp[y][x]
+            smearedd[y*st:y*st+pix, x*st:x*st+pix] += 1
+    return peg(numpy.clip(gaussian_filter(
+            numpy.divide(smeared, smearedd), sigma=st), 0, 1), 0.4, 0.6)
+
+classification_cache = ClassificationCache()
+response_cache = ResponseProbeCache()
 
 # HTTPRequestHandler class
 class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
@@ -91,20 +190,21 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     [_, _, modelname, imgpath] = self.path.split('/', 3)
     label = miniplaces.label(imgpath)
     cat = miniplaces.catname(label)
-    cl = cache.lookup(modelname, imgpath)
+    cl = classification_cache.lookup(modelname, imgpath)
+    rp = response_cache.lookup(modelname, imgpath)
 
     self.results = cl.results
     self.send_response(200)
     self.send_header("Content-type", "text/html")
     self.end_headers()    
     self.wfile.write(self.info_template(
-        imgpath, label, cat, cl).encode('utf-8'))
+        imgpath, label, cat, cl, rp).encode('utf-8'))
 
   def result_for_layer(self, name):
     return [result for layer, result in self.results if layer.name == name][0]
 
   @templet
-  def info_template(self, imgpath, label, cat, cl):
+  def info_template(self, imgpath, label, cat, cl, rp):
     """\
     <html>
     <style>
@@ -114,22 +214,22 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     <img src="/img/$imgpath">
     <p>Category: $cat
     <p>Layers
-    ${[self.layer_template(layer, result) for layer, result in cl.results]}
+    ${[self.layer_template(layer, result, rp) for layer, result in cl.results]}
     </body>
     </html>
     """
 
   @templet
-  def layer_template(self, layer, result):
+  def layer_template(self, layer, result, rp):
     """\
     <p>${layer.name}
     <p>Shape: ${result.shape}
-    ${self.layer_details(layer, result)}
+    ${self.layer_details(layer, result, rp)}
     """
 
-  def layer_details(self, layer, result):
+  def layer_details(self, layer, result, rp):
     if layer.name == 'softmax':
-      return self.softmax_details(layer, result)
+      return self.softmax_details(layer, result, rp)
     elif layer.name == 'input':
       return self.input_details(layer, result)
     elif len(result.shape) == 4 and result.shape[2] > 1:
@@ -142,21 +242,33 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     return '<p>' + layer.name
 
   @templet
-  def softmax_details(self, layer, result):
+  def softmax_details(self, layer, result, rp):
     """\
     <p>W shape ${layer.W.get_value().shape},
-    ${numpy.array_str(layer.W.get_value())}
-    <p>Goo8c ${numpy.array_str(self.result_for_layer('goo8c'))}
     <p>
     ${{
       input_layer = layer.input_layer
-      
+      goo8c = self.result_for_layer('goo8c')[0,:,0,0]
+      weights = layer.W.get_value()
+      biases = layer.b.get_value()
       sorted = []
       for i in range(result.shape[1]):
         cat = miniplaces.catname(i)
-        sorted.append((result[0, i], cat))
+        comps = numpy.multiply(weights[:,i], goo8c)
+        pieces = []
+        for j in range(comps.shape[0]):
+          pieces.append((comps[j], j))
+        pieces.sort()
+        pieces.reverse()
+        pieces = pieces[:20]
+        numbers = '; '.join(['c{}: {}'.format(j, c) for c, j in pieces])
+        component_ri = ''.join([rp.get_response_image('goo8c', j) for c, j in pieces])
+        ri = rp.get_response_image('softmax', i)
+        sorted.append(
+            (result[0, i], cat, numbers, ri, component_ri))
       sorted.sort()
-      out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
+      sorted = sorted[-5:]
+      out.extend(['{}: {} {}<br>{}{}<br>'.format(cat, r, n, im, ri) for (r, cat, n, im, ri) in sorted])
     }}
     """
 
@@ -227,13 +339,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     im3 = numpy.repeat(numpy.expand_dims(imb, axis=2), 3, axis=2)
     im3[:,:,2] += imn
     im3[:,:,2] -= imo
-    im = Image.frombytes('RGB', (im3.shape[1], im3.shape[0]), im3.tostring())
-    # im = scipy.misc.toimage(arr, cmin=cmin, cmax=cmax)
-    png_buffer = BytesIO()
-    im.save(png_buffer, format="PNG")
-    b64 = base64.b64encode(png_buffer.getvalue()).decode('ascii')
-    return '<img height=113 src="data:img/png;base64,{}" title="{}">'.format(
-        b64, title)
+    return rgbi_image(im3)
 
   def translate_path_into_dir(self, subdir, trim, path):
     path = posixpath.normpath(urllib.parse.unquote(path))
