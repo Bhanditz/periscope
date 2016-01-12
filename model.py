@@ -17,6 +17,9 @@ class Model:
         self.cropsz = 117
         self.batchsize = 256
         self.l2reg = 1e-3
+        self.l1reg = 1e-3
+        self.l2map = None
+        self.l1map = None
         self.cats = cats
         self.learning_rates = numpy.logspace(-1.5, -4, 30, dtype=numpy.float32)
         self._eval_fn = None
@@ -81,9 +84,17 @@ class Model:
         train_prediction = lasagne.layers.get_output(network)
         # create loss function
         from lasagne.regularization import regularize_network_params, l2
+        from lasagne.regularization import regularize_layer_params_weighted, l1
         loss = lasagne.objectives.categorical_crossentropy(
                 train_prediction, self.target_var).mean()
-        loss += regularize_network_params(network, l2) * self.l2reg
+        if self.l2map is None:
+            loss += regularize_network_params(network, l2) * self.l2reg
+        else:
+            loss += regularize_layer_params_weighted(
+                self.layer_map(self.l2map), l2) * self.l2reg
+        if self.l1map is not None:
+            loss += regularize_layer_params_weighted(
+                self.layer_map(self.l1map), l1) * self.l1reg
         self.train_loss = loss
         # create parameter update expressions
         params = lasagne.layers.get_all_params(network, trainable=True)
@@ -98,6 +109,11 @@ class Model:
                 self.prediction, self.target_var, top_k=1))
         self.test_5_acc = T.mean(lasagne.objectives.categorical_accuracy(
                 self.prediction, self.target_var, top_k=5))
+
+    def layer_map(self, mapping):
+        return dict([(layer, mapping[layer.name])
+                   for layer in lasagne.layers.get_all_layers(self.network)
+                   if layer.name in mapping])
 
     def named_layers(self):
         return [layer

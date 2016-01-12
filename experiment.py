@@ -43,6 +43,12 @@ def tprelu_bn(network):
     network.prelu = out
     return out
 
+class ZeroGrayLayer(Layer):
+    def get_output_shape_for(self, input_shape):
+        return input_shape
+    def get_output_for(self, input, **kwargs):
+        return input - 0.5
+
 def base(network, cropsz, batchsz):
     # 1st
     network = Conv2DLayer(network, 64, (8, 8), stride=2, nonlinearity=rectify)
@@ -106,205 +112,11 @@ def smarter(network, cropsz, batchsz):
 
     return network
 
-def gooey_gadget(network_in, conv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
-        W=HeNormal(1.372))
-    network_c = tprelu(network_c)
-    network_c = BatchNormLayer(network_c)
-    network_c = Conv2DLayer(network_c, conv_add, (3, 3),
-        stride=stride, pad=pad, name=name,
-        W=HeNormal(1.372))
-    network_c = tprelu(network_c)
-    network_c = BatchNormLayer(network_c)
-    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
-    return ConcatLayer((network_c, network_p))
-
-def geefy(network, cropsz, batchsz):
-    # 1st. Data size 117 -> 111 -> 55
-    # 115*115*32 = 438048, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv1")
-    network = tprelu(network)
-    network = BatchNormLayer(network)
-    # 113*113*32 = 423200, rf:5x5
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv2")
-    network = tprelu(network)
-    network = BatchNormLayer(network)
-    # 55*55*48 = 121000, rf:7x7
-    network = gooey_gadget(network, 32, stride=2, name="goo3") # 32 + 32 = 64 ch
-
-    # 2nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:11x11
-    network = gooey_gadget(network, 32, stride=2, name="goo4") # 64 + 32 = 96 ch
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:19x19
-    network = gooey_gadget(network, 128, stride=2, name="goo5") # 96 + 128 = 224 ch
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:35x35
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv6")
-    network = tprelu(network)
-    network = BatchNormLayer(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:51x51
-    network = gooey_gadget(network, 128, stride=2, name="goo7") # 128 + 128 = 256 ch
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:83x83
-    network = gooey_gadget(network, 128, name="goo8") # 128 + 256 = 384 ch
-
-    # 7th. Data size 3 -> 1, 592 + 512 channels
-    # 1*1*896 = 896, rf:115x115
-    network = gooey_gadget(network, 512, name="goo9") # 384 + 512 = 896 ch
-
-    return network
-
-geefy.cropsz = 115
-
-# parameter count 1898820 (1895620 trainable) in 100 arrays
-# Accuracy: 75.16% @5 after 30 epochs.
-def gee(network, cropsz, batchsz):
-    # 1st. Data size 113 -> 111
-    # 113*113*32 = 408608, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv1")
-    network = tprelu(network)
-    network = BatchNormLayer(network)
-    # 2nd. Data size 111 -> 55
-    # 55*55*64 = 193600, rf:5x5
-    network = gooey_gadget(network, 32, stride=2, name="goo2") # 32 + 32 = 64 ch
-
-    # 3nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:9x9
-    network = gooey_gadget(network, 32, stride=2, name="goo3") # 64 + 32 = 96 ch
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:17x17
-    network = gooey_gadget(network, 128, stride=2, name="goo4") # 96 + 128 = 224 ch
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:33x33
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv5")
-    network = tprelu(network)
-    network = BatchNormLayer(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:49x49
-    network = gooey_gadget(network, 128, stride=2, name="goo6") # 128 + 128 = 256 ch
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:81x81
-    network = gooey_gadget(network, 128, name="goo7") # 128 + 256 = 384 ch
-
-    # 7th. Data size 3 -> 1, 592 + 512 ch
-    # 1*1*896 = 896, rf:113x113
-    network = gooey_gadget(network, 512, name="goo8") # 384 + 512 = 896 ch
-
-    return network
-
-gee.cropsz = 113
-
-class YUVLayer(Layer):
-    def __init__(self, incoming, **kwargs):
-        super(YUVLayer, self).__init__(incoming, **kwargs)
-        self.rgb2yuv = theano.tensor.basic.constant(numpy.array(
-             [[0.299, 0.587, 0.114],
-              [-0.14713, -0.28886, 0.436],
-              [0.615, -0.51499, -0.10001]]).astype(numpy.float32))
-
+class ZeroPreluLayer(Layer):
     def get_output_shape_for(self, input_shape):
         return input_shape
-
     def get_output_for(self, input, **kwargs):
-        dot = theano.tensor.tensordot(self.rgb2yuv, input, axes=[[1], [1]])
-        out = theano.tensor.transpose(dot, axes=(1, 0, 2, 3))
-        return out
-
-def yuv(network, cropsz, batchsz):
-    network = YUVLayer(network)
-    return gee(network, cropsz, batchsz)
-yuv.cropsz = 113
-
-class ZeroGrayLayer(Layer):
-    def get_output_shape_for(self, input_shape):
-        return input_shape
-
-    def get_output_for(self, input, **kwargs):
-        return input - 0.5
-
-
-def gray(network, cropsz, batchsz):
-    network = ZeroGrayLayer(network)
-    return gee(network, cropsz, batchsz)
-gray.cropsz = 113
-
-def see_gadget(network_in, conv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
-        W=HeNormal(1.4), name=name+'i')
-    network_c = apply_prelu_bn(network_c)
-    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
-        stride=stride, pad=pad, name=name,
-        W=HeNormal(1.4))
-    network_c = apply_prelu_bn(network_c)
-    conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
-    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
-    return ConcatLayer((network_c, network_p), name=name + 'c')
-
-# parameter count 1897220 (1894020 trainable)
-# Accuracy: 46.23%@1, 75.63%@5 after 25 epochs.
-def see(network, cropsz, batchsz):
-    network = ZeroGrayLayer(network)
-
-    # 1st. Data size 113 -> 111
-    # 113*113*32 = 408608, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.4), name="conv1")
-    network = apply_prelu_bn(network)
-    # 2nd. Data size 111 -> 55
-    # 55*55*64 = 193600, rf:5x5
-    # 32 + 32 = 64 ch
-    network = see_gadget(network, 32, stride=2, name="goo2")
-
-    # 3nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:9x9
-    # 64 + 32 = 96 ch
-    network = see_gadget(network, 32, stride=2, name="goo3")
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:17x17
-    # 96 + 128 = 224 ch
-    network = see_gadget(network, 128, stride=2, name="goo4")
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:33x33
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv5")
-    network = apply_prelu_bn(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:49x49
-    # 128 + 128 = 256 ch
-    network = see_gadget(network, 128, stride=2, name="goo6")
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:81x81
-    # 128 + 256 = 384 ch
-    network = see_gadget(network, 128, name="goo7")
-
-    # 7th. Data size 3 -> 1, 592 + 512 ch
-    # 1*1*896 = 896, rf:113x113
-    # 384 + 512 = 896 ch
-    network = see_gadget(network, 512, name="goo8")
-
-    return network
-
-see.cropsz = 113
+        return (input - 0.2) * 1.25
 
 class QuickNormLayer(Layer):
     def __init__(self, incoming,
@@ -385,195 +197,6 @@ class QuickNormLayer(Layer):
         normalized = (input - mean) * inv_std
         return normalized
 
-def apply_prelu_bn_uni(layer):
-    nonlinearity = getattr(layer, 'nonlinearity', None)
-    if nonlinearity is not None:
-        layer.nonlinearity = identity
-    if hasattr(layer, 'b') and layer.b is not None:
-        del layer.params[layer.b]
-        layer.b = None
-    bn = layer.bn = QuickNormLayer(layer)
-    out = layer.prelu = ParametricRectifierLayer(bn)
-    return out
-
-def uni_gadget(network_in, conv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
-        W=HeNormal(1.372), name=name+'i')
-    network_c = apply_prelu_bn_uni(network_c)
-    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
-        stride=stride, pad=pad, name=name,
-        W=HeNormal(1.372))
-    network_c = apply_prelu_bn_uni(network_c)
-    conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
-    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
-    network_p = QuickNormLayer(network_p)
-    return ConcatLayer((network_c, network_p), name=name + 'c')
-
-def uni(network, cropsz, batchsz):
-    network = ZeroGrayLayer(network)
-
-    # 1st. Data size 113 -> 111
-    # 113*113*32 = 408608, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv1")
-    network = apply_prelu_bn_uni(network)
-    # 2nd. Data size 111 -> 55
-    # 55*55*64 = 193600, rf:5x5
-    # 32 + 32 = 64 ch
-    network = uni_gadget(network, 32, stride=2, name="goo2")
-
-    # 3nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:9x9
-    # 64 + 32 = 96 ch
-    network = uni_gadget(network, 32, stride=2, name="goo3")
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:17x17
-    # 96 + 128 = 224 ch
-    network = uni_gadget(network, 128, stride=2, name="goo4")
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:33x33
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv5")
-    network = apply_prelu_bn_uni(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:49x49
-    # 128 + 128 = 256 ch
-    network = uni_gadget(network, 128, stride=2, name="goo6")
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:81x81
-    # 128 + 256 = 384 ch
-    network = uni_gadget(network, 128, name="goo7")
-
-    # 7th. Data size 3 -> 1, 592 + 512 ch
-    # 1*1*896 = 896, rf:113x113
-    # 384 + 512 = 896 ch
-    network = uni_gadget(network, 512, name="goo8")
-
-    return network
-
-uni.cropsz = 113
-
-def apply_prelu_bn_unz(layer):
-    nonlinearity = getattr(layer, 'nonlinearity', None)
-    if nonlinearity is not None:
-        layer.nonlinearity = identity
-    if hasattr(layer, 'b') and layer.b is not None:
-        del layer.params[layer.b]
-        layer.b = None
-    bn = layer.bn = QuickNormLayer(layer)
-    out = layer.prelu = ParametricRectifierLayer(bn)
-    out = ZeroGrayLayer(out)
-    return out
-
-def unz_gadget(network_in, conv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
-        W=HeNormal(1.372), name=name+'i')
-    network_c = apply_prelu_bn_unz(network_c)
-    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
-        stride=stride, pad=pad, name=name,
-        W=HeNormal(1.372))
-    network_c = apply_prelu_bn_unz(network_c)
-    conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
-    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
-    network_p = QuickNormLayer(network_p)
-    return ConcatLayer((network_c, network_p), name=name + 'c')
-
-def unz(network, cropsz, batchsz):
-    network = ZeroGrayLayer(network)
-
-    # 1st. Data size 113 -> 111
-    # 113*113*32 = 408608, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv1")
-    network = apply_prelu_bn_unz(network)
-    # 2nd. Data size 111 -> 55
-    # 55*55*64 = 193600, rf:5x5
-    # 32 + 32 = 64 ch
-    network = unz_gadget(network, 32, stride=2, name="goo2")
-
-    # 3nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:9x9
-    # 64 + 32 = 96 ch
-    network = unz_gadget(network, 32, stride=2, name="goo3")
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:17x17
-    # 96 + 128 = 224 ch
-    network = unz_gadget(network, 128, stride=2, name="goo4")
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:33x33
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv5")
-    network = apply_prelu_bn_unz(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:49x49
-    # 128 + 128 = 256 ch
-    network = unz_gadget(network, 128, stride=2, name="goo6")
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:81x81
-    # 128 + 256 = 384 ch
-    network = unz_gadget(network, 128, name="goo7")
-
-    # 7th. Data size 3 -> 1, 592 + 512 ch
-    # 1*1*896 = 896, rf:113x113
-    # 384 + 512 = 896 ch
-    network = unz_gadget(network, 512, name="goo8")
-
-    return network
-
-unz.cropsz = 113
-
-def unr(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-unr.cropsz = 113
-unr.l2reg = 2e-2
-
-def uno(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-uno.cropsz = 113
-uno.l2reg = 1e-2
-
-
-def uns(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-uns.cropsz = 113
-uns.l2reg = 1e-2
-uns.learning_rates = numpy.logspace(-1.5, -6, 30, dtype=numpy.float32)
-
-def unf(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-unf.cropsz = 113
-unf.l2reg = 1e-2
-unf.learning_rates = numpy.logspace(-2, -4, 30, dtype=numpy.float32)
-
-def unq(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-unq.cropsz = 113
-unq.l2reg = 1e-2
-unq.learning_rates = numpy.logspace(-2, -5, 30, dtype=numpy.float32)
-
-def unu(network, cropsz, batchsz):
-    return unz(network, cropsz, batchsz)
-unu.cropsz = 113
-unu.l2reg = 1e-2
-unu.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
-
-class ZeroPreluLayer(Layer):
-    def get_output_shape_for(self, input_shape):
-        return input_shape
-
-    def get_output_for(self, input, **kwargs):
-        return (input - 0.2) * 1.25
-
 def apply_prelu_bn_ren(layer):
     nonlinearity = getattr(layer, 'nonlinearity', None)
     if nonlinearity is not None:
@@ -598,7 +221,7 @@ def ren_gadget(network_in, conv_add, stride=1, pad=0, name=None):
     conv.prelu.name = name + 'p'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = QuickNormLayer(network_p)
-    return ConcatLayer((network_c, network_p), name=name + 'c')
+    return ConcatLayer((network_p, network_c), name=name + 'c')
 
 def ren(network, cropsz, batchsz):
     network = ZeroGrayLayer(network)
@@ -649,88 +272,15 @@ def ren(network, cropsz, batchsz):
 ren.cropsz = 113
 ren.l2reg = 1e-2
 ren.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
-
-class PosShiftLayer(Layer):
-    def get_output_shape_for(self, input_shape):
-        return input_shape
-
-    def get_output_for(self, input, **kwargs):
-        return (input * 0.5) + 0.5
-
-def apply_prelu_bn_reno(layer):
-    nonlinearity = getattr(layer, 'nonlinearity', None)
-    if nonlinearity is not None:
-        layer.nonlinearity = identity
-    if hasattr(layer, 'b') and layer.b is not None:
-        del layer.params[layer.b]
-        layer.b = None
-    bn = layer.bn = QuickNormLayer(layer)
-    out = layer.prelu = ParametricRectifierLayer(bn)
-    # out = ZeroPreluLayer(out)
-    return out
-
-def reno_gadget(network_in, conv_add, stride=1, pad=0, name=None):
-    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
-        W=HeNormal(1.372), name=name+'i')
-    network_c = apply_prelu_bn_reno(network_c)
-    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
-        stride=stride, pad=pad, name=name,
-        W=HeNormal(1.372))
-    network_c = apply_prelu_bn_reno(network_c)
-    conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
-    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
-    network_p = QuickNormLayer(network_p)
-    network_p = PosShiftLayer(network_p)
-    return ConcatLayer((network_p, network_c), name=name + 'c')
-
-def reno(network, cropsz, batchsz):
-    network = ZeroGrayLayer(network)
-
-    # 1st. Data size 113 -> 111
-    # 113*113*32 = 408608, rf:3x3
-    network = Conv2DLayer(network, 32, (3, 3),
-        W=HeNormal(1.372), name="conv1")
-    network = apply_prelu_bn_reno(network)
-    # 2nd. Data size 111 -> 55
-    # 55*55*64 = 193600, rf:5x5
-    # 32 + 32 = 64 ch
-    network = reno_gadget(network, 32, stride=2, name="goo2")
-
-    # 3nd. Data size 55 -> 27
-    # 27*27*96 = 69984, rf:9x9
-    # 64 + 32 = 96 ch
-    network = reno_gadget(network, 32, stride=2, name="goo3")
-
-    # 3rd.  Data size 27 -> 13, 192 + 144
-    # 13*13*224 = 37856, rf:17x17
-    # 96 + 128 = 224 ch
-    network = reno_gadget(network, 128, stride=2, name="goo4")
-
-    # 4th.  Data size 13 -> 11
-    # 11*11*128 = 15488, rf:33x33
-    network = Conv2DLayer(network, 128, (3, 3),
-        W=HeNormal(1.372), name="conv5")
-    network = apply_prelu_bn_reno(network)
-
-    # 5th. Data size 11 -> 5
-    # 5*5*256 = 6400, rf:49x49
-    # 128 + 128 = 256 ch
-    network = reno_gadget(network, 128, stride=2, name="goo6")
-
-    # 6th. Data size 5 -> 3
-    # 3*3*384 = 3456, rf:81x81
-    # 128 + 256 = 384 ch
-    network = reno_gadget(network, 128, name="goo7")
-
-    # 7th. Data size 3 -> 1, 592 + 512 ch
-    # 1*1*896 = 896, rf:113x113
-    # 384 + 512 = 896 ch
-    network = reno_gadget(network, 512, name="goo8")
-
-    return network
-
-reno.cropsz = 113
-reno.l2reg = 1e-2
-reno.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+ren.l1reg = 1e-2
+ren.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
 

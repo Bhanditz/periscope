@@ -48,11 +48,7 @@ class MiniPlacesData:
 
 miniplaces = MiniPlacesData('mp-dev_kit')
 models = {
-  'see1': Model('see', 'exp-see-1/epoch-024.mdl'),
-  'see2': Model('see', 'exp-see-2/epoch-028.mdl'),
-  'uni': Model('uni', 'exp-uni-1/epoch-027.mdl'),
-  'unq': Model('unq', 'exp-unq/epoch-029.mdl'),
-  'ren': Model('ren', 'exp-ren/epoch-029.mdl'),
+  'ren': Model('ren', 'exp-ren-1/epoch-029.mdl'),
 }
 
 # force a compile on startup
@@ -99,7 +95,7 @@ def response_image(img, vec):
         total[(slice(None), s[0], s[1])] += resp[i]
         count[(slice(None), s[0], s[1])] += 1
     mask = total / count
-    mask = peg((mask - mask.mean()) / (mask.std() + epsilon), -0.2, 0.2)
+    mask = peg((mask - mask.mean()) / (mask.std() + epsilon), 0, 0.5)
     masked = img * mask
     im3 = scipy.misc.bytescale(
         numpy.transpose(masked, [1, 2, 0]), cmin=0, cmax=1)
@@ -239,12 +235,16 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     else:
       if hasattr(layer, 'prelu') and hasattr(layer, 'bn'):
         return self.fc_details(layer, result)
+      elif layer.name.endswith('c'):
+        return self.response_details(layer, result, rp)
     return '<p>' + layer.name
 
   @templet
   def softmax_details(self, layer, result, rp):
     """\
     <p>W shape ${layer.W.get_value().shape},
+    <br>Average |W|: ${abs(layer.W.get_value()).mean()};
+    average W^2: ${(layer.W.get_value() ** 2).mean()}<br>
     <p>
     ${{
       input_layer = layer.input_layer
@@ -257,12 +257,12 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
         comps = numpy.multiply(weights[:,i], goo8c)
         pieces = []
         for j in range(comps.shape[0]):
-          pieces.append((comps[j], j))
+          pieces.append((comps[j], j, 'black' if goo8c[j] > 0 else 'red'))
         pieces.sort()
         pieces.reverse()
         pieces = pieces[:20]
-        numbers = '; '.join(['c{}: {}'.format(j, c) for c, j in pieces])
-        component_ri = ''.join([rp.get_response_image('goo8c', j) for c, j in pieces])
+        numbers = '; '.join(['<span style="color:{}">c{}: {}</span>'.format(a, j, c) for c, j, a in pieces])
+        component_ri = ''.join([rp.get_response_image('goo8c', j) for c, j, a in pieces])
         ri = rp.get_response_image('softmax', i)
         sorted.append(
             (result[0, i], cat, numbers, ri, component_ri))
@@ -283,7 +283,9 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
   @templet
   def conv_details(self, layer, result):
     """\
-    <p>Prelu alpha mean: ${numpy.mean(layer.prelu.alpha.get_value())}<br>
+    <p>Average |W|: ${abs(layer.W.get_value()).mean()};
+    average W^2: ${(layer.W.get_value() ** 2).mean()}<br>
+    Prelu alpha mean: ${numpy.mean(layer.prelu.alpha.get_value())}<br>
     BN mean: ${numpy.mean(layer.bn.mean.get_value())},
     BN inv_std ${numpy.mean(layer.bn.inv_std.get_value())}<br>
     ${self.conv_images(layer, result)}
@@ -316,7 +318,8 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
   @templet
   def fc_details(self, layer, result):
     """\
-    <p>${numpy.array_str(layer.W.get_value())}<br>
+    <p>Average |W|: ${abs(layer.W.get_value()).mean()};
+    average W^2: ${(layer.W.get_value() ** 2).mean()}<br>
     ${numpy.array_str(layer.prelu.alpha.get_value())}
     <p>Prelu alpha mean: ${numpy.mean(layer.prelu.alpha.get_value())}<br>
     BN mean: ${numpy.mean(layer.bn.mean.get_value())},
@@ -331,6 +334,18 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
       out.extend(['{}: {}<br>'.format(cat, r) for (r, cat) in sorted])
     }}
     """
+
+  def response_details(self, layer, result, rp):
+      index = numpy.argsort(result.flatten())
+      return ''.join([self.one_response_image(layer, result, rp, index[j])
+          for j in range(len(index))])
+
+  @templet
+  def one_response_image(self, layer, result, rp, i):
+    """\
+    ${rp.get_response_image(layer.name, i)} ${i}: ${result.flatten()[i]}<br>
+    """
+
 
   def image_for_array(self, arr, cmin=0, cmax=2, cneg=-4, title=""):
     imb = scipy.misc.bytescale(arr, cmin=cmin, cmax=cmax)
