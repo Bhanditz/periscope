@@ -26,7 +26,8 @@ parser.add_argument('-l', '--labels', action='store_true', help='output category
 parser.add_argument('-d', '--devkit', help='devkit directory containing categories.txt', default='mp-dev_kit')
 args = parser.parse_args()
 
-assert len(args.network) == len(args.model)
+assert len(args.network) >= 1
+assert len(args.network) <= len(args.model)
 
 imsz = 128
 flips = [False, True]
@@ -45,7 +46,7 @@ cropsz = []
 for ni, m in enumerate(args.model):
     task(m.name)
     subtask("Building model and compiling functions")
-    model = Model(args.network[ni], m.name)
+    model = Model(args.network[min(ni, len(args.network) - 1)], m.name)
     networks.append(model.eval_fn())
     cropsz.append(model.cropsz)
 
