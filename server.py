@@ -10,7 +10,9 @@ import base64
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from templet import templet
 from model import Model
-from response import ResponseProbe, rgbi_image
+from response import ResponseProbe
+from PIL import Image
+from io import BytesIO
 
 class TextMap:
   def __init__(self, filename, trim=0):
@@ -52,6 +54,26 @@ models = {
   'ren3': Model('ren', 'exp-ren-3/epoch-029.mdl'),
 }
 
+
+def html_image(img):
+    imbytes = scipy.misc.bytescale(
+        numpy.transpose(img, [1, 2, 0]), cmin=0, cmax=1)
+    return html_image_from_bytes(imbytes)
+
+def html_image_from_bytes(im3, title=None):
+    if title is None:
+        attr = ''
+    else:
+        attr = ' title="{}"'.format(title)
+    height = im3.shape[1]
+    while height < 64:
+        height *= 2
+    png_buffer = BytesIO()
+    im = Image.frombytes('RGB', (im3.shape[1], im3.shape[0]), im3.tostring())
+    im.save(png_buffer, format="PNG")
+    b64 = base64.b64encode(png_buffer.getvalue()).decode('ascii')
+    return '<img height={} src="data:img/png;base64,{}"{}>'.format(
+        height, b64, attr)
 # force a compile on startup
 # debug_fn = models[0].debug_fn()
 
@@ -176,8 +198,8 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
         pieces.reverse()
         pieces = pieces[:20]
         numbers = '; '.join(['<span style="color:{}">c{}: {}</span>'.format(a, j, c) for c, j, a in pieces])
-        component_ri = ''.join([rp.get_response_image('goo8c', j) for c, j, a in pieces])
-        ri = rp.get_response_image('softmax', i)
+        component_ri = ''.join([html_image(rp.get_response_image('goo8c', j)) for c, j, a in pieces])
+        ri = html_image(rp.get_response_image('softmax', i))
         sorted.append(
             (result[0, i], cat, numbers, ri, component_ri))
       sorted.sort()
@@ -257,7 +279,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
   @templet
   def one_response_image(self, layer, result, rp, i):
     """\
-    ${rp.get_response_image(layer.name, i)} ${i}: ${result.flatten()[i]}<br>
+    ${html_image(rp.get_response_image(layer.name, i))} ${i}: ${result.flatten()[i]}<br>
     """
 
 
@@ -268,7 +290,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     im3 = numpy.repeat(numpy.expand_dims(imb, axis=2), 3, axis=2)
     im3[:,:,2] += imn
     im3[:,:,2] -= imo
-    return rgbi_image(im3)
+    return html_image_from_bytes(im3)
 
   def translate_path_into_dir(self, subdir, trim, path):
     path = posixpath.normpath(urllib.parse.unquote(path))
