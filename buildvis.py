@@ -26,6 +26,7 @@ parser.add_argument('-b', '--batchsize', type=int, help='size of each mini batch
 parser.add_argument('-s', '--set', help='image set to evaluate on', choices=['test', 'val'], default='val')
 parser.add_argument('-d', '--devkit', help='devkit directory containing categories.txt', default='mp-dev_kit')
 parser.add_argument('-w', '--wrongskip', help='penalize images that are not correclty classified', type=bool, default=True)
+parser.add_argument('-c', '--count', help='number of examples to output', type=int, default=50)
 args = parser.parse_args()
 
 imsz = 128
@@ -99,21 +100,24 @@ if args.wrongskip:
 # Collect best 10 results for each channel of each layer
 examples = {}
 for layer in layers:
-    best = (-responses[layer.name]).argsort(axis=0)[:10,:]
+    best = (-responses[layer.name]).argsort(axis=0)[:args.count,:]
     examples[layer.name] = best
 
 task("Generating response images".format(args.set))
 i = 0
-p = progress(4 * sum([b.shape[1] for b in examples.values()]))
+p = progress(args.count * sum([b.shape[1] for b in examples.values()]))
 
 # Generate response image for each
-for layer in layers:
+for layer in reversed([lay in layers if lay.name == 'goo8c']):
     best = examples[layer.name]
     for j in range(best.shape[1]):
-        for k in range(4):
+        for k in range(args.count):
             imdata = X_test[best[k, j]]
-            flatloc = responselocs[layer.name][best[k, j], j]
-            loc = numpy.unravel_index(flatloc, shapes[layer.name][2:])
+            if len(shapes[layer.name]) == 4:
+                flatloc = responselocs[layer.name][best[k, j], j]
+                loc = numpy.unravel_index(flatloc, shapes[layer.name][2:])
+            else:
+                loc = (0, 0)
             rp = ResponseProbe(model, imgdata=imdata)
             ri = rp.get_response_image(layer.name, j, loc[0], loc[1])
             imbytes = scipy.misc.bytescale(
