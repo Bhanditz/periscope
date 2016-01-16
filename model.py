@@ -13,6 +13,7 @@ class Model:
     def __init__(self, network, filename=None, batchsize=None, cats=100):
         if network not in experiment.__dict__:
             raise LookupError("No network {} found.".format(network))
+        self.filename = filename
         self.network_fn = experiment.__dict__[network]
         self.cropsz = 117
         self.batchsize = 256
@@ -55,9 +56,11 @@ class Model:
         prepared = cropped[:,:,:,::self.flip_var]
         
         # input layer is always the same
+        self.epoch_var = T.iscalar('epoch')
         network = lasagne.layers.InputLayer(
                 (self.batchsize, 3, self.cropsz, self.cropsz), prepared,
                 name="input")
+        network.epoch = self.epoch_var
         network = self.network_fn(network, self.cropsz, self.batchsize)
 
         # Last softmax layer is always the same
@@ -115,6 +118,11 @@ class Model:
                    for layer in lasagne.layers.get_all_layers(self.network)
                    if layer.name in mapping])
 
+    def layer_named(self, name):
+        for layer in lasagne.layers.get_all_layers(self.network):
+            if layer.name == name:
+                return layer
+
     def named_layers(self):
         return [layer
                    for layer in lasagne.layers.get_all_layers(self.network)
@@ -150,11 +158,13 @@ class Model:
                 self.input_var,
                 self.target_var,
                 self.learning_rate_var,
+                self.epoch_var,
                 theano.Param(self.flip_var, default=1),
                 theano.Param(self.crop_var, default=self.center)],
                 self.train_loss,
                 updates=self.updates,
-                allow_input_downcast=True)
+                allow_input_downcast=True,
+                on_unused_input='ignore')
         return self._train_fn
 
     def debug_fn(self):
@@ -168,3 +178,7 @@ class Model:
                 outs,
                 allow_input_downcast=True)
         return self._debug_fn
+
+    def ri_path(self, layername, activation, ex=0):
+        return os.path.join(os.path.dirname(self.filename), "ri",
+            "{}_{}.{}.png".format(layername, activation, ex))

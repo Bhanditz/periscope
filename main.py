@@ -276,7 +276,7 @@ while epoch < end:
         flip = numpy.random.randint(0, 2) and 1 or -1
         frame[0] = numpy.random.randint(0, imsz - cropsz + 1)
         frame[1] = numpy.random.randint(0, imsz - cropsz + 1)
-        train_loss += train_fn(inp, res, lr, flip, frame)
+        train_loss += train_fn(inp, res, lr, epoch, flip, frame)
         p.update(i)
         i = i+1
         if i > train_batches:
