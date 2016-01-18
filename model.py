@@ -90,11 +90,11 @@ class Model:
         from lasagne.regularization import regularize_layer_params_weighted, l1
         loss = lasagne.objectives.categorical_crossentropy(
                 train_prediction, self.target_var).mean()
-        if self.l2map is None:
-            loss += regularize_network_params(network, l2) * self.l2reg
-        else:
+        if self.l2map is not None:
             loss += regularize_layer_params_weighted(
                 self.layer_map(self.l2map), l2) * self.l2reg
+        elif self.l2map:
+            loss += regularize_network_params(network, l2) * self.l2reg
         if self.l1map is not None:
             loss += regularize_layer_params_weighted(
                 self.layer_map(self.l1map), l1) * self.l1reg
@@ -112,6 +112,14 @@ class Model:
                 self.prediction, self.target_var, top_k=1))
         self.test_5_acc = T.mean(lasagne.objectives.categorical_accuracy(
                 self.prediction, self.target_var, top_k=5))
+
+    def renormalize_weights(self):
+        for layer in lasagne.layers.get_all_layers(self.network):
+            if hasattr(layer, 'W'):
+                weights = layer.W.get_value()
+                target = weights.std() * numpy.sqrt(
+                    numpy.prod(weights.shape[1:]))
+                layer.W.set_value(layer.W.get_value() / target)
 
     def layer_map(self, mapping):
         return dict([(layer, mapping[layer.name])

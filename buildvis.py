@@ -25,7 +25,7 @@ parser.add_argument('-m', '--model', type=argparse.FileType('rb'), help='trained
 parser.add_argument('-b', '--batchsize', type=int, help='size of each mini batch', default=256)
 parser.add_argument('-s', '--set', help='image set to evaluate on', choices=['test', 'val'], default='val')
 parser.add_argument('-d', '--devkit', help='devkit directory containing categories.txt', default='mp-dev_kit')
-parser.add_argument('-w', '--wrongskip', help='penalize images that are not correclty classified', type=bool, default=True)
+parser.add_argument('-w', '--wrongskip', help='penalize images that are not correclty classified', type=bool, default=False)
 parser.add_argument('-c', '--count', help='number of examples to output', type=int, default=50)
 args = parser.parse_args()
 
@@ -108,7 +108,7 @@ i = 0
 p = progress(args.count * sum([b.shape[1] for b in examples.values()]))
 
 # Generate response image for each
-for layer in reversed([lay in layers if lay.name == 'goo8c']):
+for layer in reversed([lay for lay in layers if lay.name == 'goo8c']):
     best = examples[layer.name]
     for j in range(best.shape[1]):
         for k in range(args.count):

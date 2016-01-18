@@ -7,6 +7,8 @@ import urllib.parse
 import numpy
 import scipy.ndimage
 import base64
+import explore
+import scipy
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from templet import templet
 from model import Model
@@ -52,6 +54,7 @@ models = {
   'ren1': Model('ren', 'exp-ren-1/epoch-029.mdl'),
   'ren2': Model('ren', 'exp-ren-2/epoch-029.mdl'),
   'ren3': Model('ren', 'exp-ren-3/epoch-029.mdl'),
+  'ren7': Model('ren', 'exp-ren-7/epoch-029.mdl'),
 }
 
 
@@ -116,7 +119,23 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
   def do_GET(self):
     if self.path.startswith('/info/'):
       return self.do_info()
+    if self.path.startswith('/explore/'):
+      return self.do_explore()
     super().do_GET()
+
+  def do_explore(self):
+    [_, _, modelname, imgpath] = self.path.split('/', 3)
+    label = miniplaces.label(imgpath)
+    cat = miniplaces.catname(label)
+    cl = classification_cache.lookup(modelname, imgpath)
+    rp = response_cache.lookup(modelname, imgpath)
+    template = explore.ExploreTemplate(miniplaces, imgpath, label, cat, cl, rp)
+
+    self.results = cl.results
+    self.send_response(200)
+    self.send_header("Content-type", "text/html")
+    self.end_headers()    
+    self.wfile.write(template.html().encode('utf-8'))
 
   def do_info(self):
     [_, _, modelname, imgpath] = self.path.split('/', 3)
@@ -146,22 +165,23 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     <img src="/img/$imgpath">
     <p>Category: $cat
     <p>Layers
-    ${[self.layer_template(layer, result, rp) for layer, result in cl.results]}
+    ${[self.layer_template(layer, result, rp, cl)
+         for layer, result in cl.results]}
     </body>
     </html>
     """
 
   @templet
-  def layer_template(self, layer, result, rp):
+  def layer_template(self, layer, result, rp, cl):
     """\
     <p>${layer.name}
     <p>Shape: ${result.shape}
-    ${self.layer_details(layer, result, rp)}
+    ${self.layer_details(layer, result, rp, cl)}
     """
 
-  def layer_details(self, layer, result, rp):
+  def layer_details(self, layer, result, rp, cl):
     if layer.name == 'softmax':
-      return self.softmax_details(layer, result, rp)
+      return self.softmax_details(layer, result, rp, cl)
     elif layer.name == 'input':
       return self.input_details(layer, result)
     elif len(result.shape) == 4 and result.shape[2] > 1:
@@ -176,7 +196,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     return '<p>' + layer.name
 
   @templet
-  def softmax_details(self, layer, result, rp):
+  def softmax_details(self, layer, result, rp, cl):
     """\
     <p>W shape ${layer.W.get_value().shape},
     <br>Average |W|: ${abs(layer.W.get_value()).mean()};
@@ -198,7 +218,7 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
         pieces.reverse()
         pieces = pieces[:20]
         numbers = '; '.join(['<span style="color:{}">c{}: {}</span>'.format(a, j, c) for c, j, a in pieces])
-        component_ri = ''.join([html_image(rp.get_response_image('goo8c', j)) for c, j, a in pieces])
+        component_ri = ''.join([self.explain_response('goo8c', j, rp, cl) for c, j, a in pieces])
         ri = html_image(rp.get_response_image('softmax', i))
         sorted.append(
             (result[0, i], cat, numbers, ri, component_ri))
@@ -207,6 +227,12 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
       out.extend(['{}: {} {}<br>{}{}<br>'.format(cat, r, n, im, ri) for (r, cat, n, im, ri) in sorted])
     }}
     """
+
+  def explain_response(self, layername, activation, rp, cl):
+    with open(cl.model.ri_path(layername, activation), 'rb') as ri_file:
+        b64 = base64.b64encode(ri_file.read()).decode('ascii')
+        ri = '<img height={} src="data:img/png;base64,{}">'.format(128, b64)
+    return ri + html_image(rp.get_response_image(layername, activation))
 
   def input_details(self, layer, result):
     out = ['<p>']
@@ -281,7 +307,6 @@ class PeriscopeRequestHandler(SimpleHTTPRequestHandler):
     """\
     ${html_image(rp.get_response_image(layer.name, i))} ${i}: ${result.flatten()[i]}<br>
     """
-
 
   def image_for_array(self, arr, cmin=0, cmax=2, cneg=-4, title=""):
     imb = scipy.misc.bytescale(arr, cmin=cmin, cmax=cmax)

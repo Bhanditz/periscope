@@ -281,6 +281,7 @@ while epoch < end:
         i = i+1
         if i > train_batches:
             break
+    p.finish()
 
     # Only do forward pass on a subset of the training data
     subtask("Doing forward pass on training data (size: {})".format(len(X_val)))
@@ -296,6 +297,7 @@ while epoch < end:
         train_acc5 += acc5
         if i == train_test_batches:
             break
+    p.finish()
 
     subtask("Doing forward pass on validation data (size: {})".format(len(X_val)))
     # Also do a validation data forward pass
@@ -311,6 +313,7 @@ while epoch < end:
         val_acc5 += acc5
         i += 1
         p.update(i)
+    p.finish()
 
     # record performance
     training.append((train_loss/train_batches, train_acc1/train_test_batches, train_acc5/train_test_batches))
@@ -358,6 +361,7 @@ def make_confusion_db(name, fname, X, Y):
             accn[confusion] = accn.get(confusion, 0) + 1
         if i >= test_batches:
             break
+    p.finish()
     correct = 0
     for index in range(10):
         correct += accn.get(index, 0)
@@ -419,6 +423,7 @@ def make_response_file(name, fname, cname, X, Y, use_first=False):
             toview = Y[index]
         resp_out[index] = debug_fn(probe)[:,toview]
         p.update(index + 1)
+    p.finish()
     del resp_out
     rfile.close()
 
