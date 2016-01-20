@@ -1242,7 +1242,7 @@ def rud(network, cropsz, batchsz):
     network = apply_prelu_bn(network)
     # max pool 47 -> 23
     network = MaxPool2DLayer(network, (3, 3), stride=2)
-    # 33856
+    # 67712
     # 3nd. Data size 23 -> 23
     network = Conv2DLayer(network, 256, (3, 3), pad='same', W=HeUniform('relu'))
     network = apply_prelu_bn(network)
@@ -1279,5 +1279,62 @@ def rud(network, cropsz, batchsz):
 
 rud.cropsz = 113
 rud.ramp_lr = False
+# red.l2reg = 1e-2
+
+def rrd(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 288800
+    network = Conv2DLayer(network, 32, (3, 3), W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # max pool 111 -> 55
+    # network = MaxPool2DLayer(network, (3, 3), stride=2)
+    # 2nd. Data size 95 -> 47
+    # 141376
+    network = Conv2DLayer(network, 64, (3, 3), stride=2, W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # conv. 47 -> 47
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # max pool 47 -> 23
+    network = MaxPool2DLayer(network, (3, 3), stride=2)
+    # 67712
+    # 3nd. Data size 23 -> 23
+    network = Conv2DLayer(network, 320, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # max pool 23 -> 11
+    network = MaxPool2DLayer(network, (3, 3), stride=2)
+    # 38720
+
+    # 4th.  Data size 11 -> 11
+    network = Conv2DLayer(network, 200, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # 24200
+
+    # 5th.  Data size 11 -> 11
+    network = Conv2DLayer(network, 512, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # max pool 11 -> 5
+    network = MaxPool2DLayer(network, (3, 3), stride=2)
+    # 12800
+
+    # 6th. Data size 5 -> 5
+    # 6400
+    network = Conv2DLayer(network, 256, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # 7th.  Data size 5 -> 3
+    network = Conv2DLayer(network, 384, (3, 3), W=HeUniform('relu'))
+    network = apply_prelu_bn(network)
+    # 8th. Data size 3 -> 1
+    network = Conv2DLayer(network, 896, (3, 3), W=HeUniform('relu'))
+    network = tprelu(network)
+    network = DropoutLayer(network)
+    # network = apply_prelu_bn(network)
+
+    return network
+
+rrd.cropsz = 113
+rrd.ramp_lr = False
 # red.l2reg = 1e-2
 
