@@ -63,6 +63,7 @@ if args.network not in experiment.__dict__:
 model = Model(args.network, None, batchsize=args.batchsize, cats=cats)
 cropsz = model.cropsz
 learning_rates = model.learning_rates
+ramp_lr = model.ramp_lr
 subtask("parameter count {} ({} trainable)".format(
         lasagne.layers.count_params(model.network),
         lasagne.layers.count_params(model.network, trainable=True)))
@@ -270,9 +271,12 @@ while epoch < end:
     it = iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True)
     if args.remix:
         it = remix(it)
-    lr = learning_rates[epoch] * 2
+    lr = learning_rates[epoch]
+    if ramp_lr:
+        lr *= 2
     for inp, res in it:
-        lr -= learning_rates[epoch] / train_batches
+        if ramp_lr:
+            lr -= learning_rates[epoch] / train_batches
         flip = numpy.random.randint(0, 2) and 1 or -1
         frame[0] = numpy.random.randint(0, imsz - cropsz + 1)
         frame[1] = numpy.random.randint(0, imsz - cropsz + 1)

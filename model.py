@@ -22,6 +22,7 @@ class Model:
         self.l2map = None
         self.l1map = None
         self.cats = cats
+        self.ramp_lr = True
         self.learning_rates = numpy.logspace(-1.5, -4, 30, dtype=numpy.float32)
         self._eval_fn = None
         self._train_fn = None
@@ -33,6 +34,8 @@ class Model:
             self.l2reg = self.network_fn.l2reg
         if hasattr(self.network_fn, 'learning_rates'):
             self.learning_rates = self.network_fn.learning_rates
+        if hasattr(self.network_fn, 'ramp_lr'):
+            self.ramp_lr = self.network_fn.ramp_lr
         if batchsize is not None:
             self.batchsize = batchsize
         self.state = None
