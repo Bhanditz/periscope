@@ -21,6 +21,7 @@ class Model:
         self.l1reg = 1e-3
         self.l2map = None
         self.l1map = None
+        self.biaslrmult = None
         self.cats = cats
         self.ramp_lr = True
         self.learning_rates = numpy.logspace(-1.5, -4, 30, dtype=numpy.float32)
@@ -30,14 +31,16 @@ class Model:
         self._debug_fn = None
         if hasattr(self.network_fn, 'cropsz'):
             self.cropsz = self.network_fn.cropsz
+        if hasattr(self.network_fn, 'batchsize'):
+            self.batchsize = self.network_fn.batchsize
+        elif batchsize is not None:
+            self.batchsize = batchsize
         if hasattr(self.network_fn, 'l2reg'):
             self.l2reg = self.network_fn.l2reg
         if hasattr(self.network_fn, 'learning_rates'):
             self.learning_rates = self.network_fn.learning_rates
         if hasattr(self.network_fn, 'ramp_lr'):
             self.ramp_lr = self.network_fn.ramp_lr
-        if batchsize is not None:
-            self.batchsize = batchsize
         self.state = None
         if filename:
             lfile = open(filename, 'rb')

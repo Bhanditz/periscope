@@ -108,7 +108,7 @@ i = 0
 p = progress(args.count * sum([b.shape[1] for b in examples.values()]))
 
 # Generate response image for each
-for layer in reversed([lay for lay in layers if lay.name == 'goo8c']):
+for layer in reversed([lay for lay in layers if lay.name == 'conv8']):
     best = examples[layer.name]
     for j in range(best.shape[1]):
         for k in range(args.count):

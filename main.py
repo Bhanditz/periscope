@@ -256,8 +256,8 @@ while epoch < end:
     start_time = time.time()
 
     # How much work will we have to do?
-    train_batches = len(range(0, len(X_train), args.batchsize))
-    val_batches = len(range(0, len(X_val), args.batchsize))
+    train_batches = len(range(0, len(X_train), model.batchsize))
+    val_batches = len(range(0, len(X_val), model.batchsize))
     train_test_batches = val_batches
 
     if args.batch_stop != 0:
@@ -268,7 +268,7 @@ while epoch < end:
     p = progress(train_batches)
     i = 1
     frame = numpy.zeros((2,), dtype=numpy.int32)
-    it = iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True)
+    it = iterate_minibatches(X_train, y_train, model.batchsize, shuffle=True)
     if args.remix:
         it = remix(it)
     lr = learning_rates[epoch]
@@ -293,7 +293,7 @@ while epoch < end:
     i = 0
     train_acc1 = 0
     train_acc5 = 0
-    for inp, res in iterate_minibatches(X_train, y_train, args.batchsize, shuffle=True):
+    for inp, res in iterate_minibatches(X_train, y_train, model.batchsize, shuffle=True):
         i = i+1
         _, acc1, acc5 = val_fn(inp, res)
         p.update(i)
@@ -310,7 +310,7 @@ while epoch < end:
     val_acc5 = 0
     p = progress(val_batches)
     i = 0
-    for inp, res in iterate_minibatches(X_val, y_val, args.batchsize, shuffle=False):
+    for inp, res in iterate_minibatches(X_val, y_val, model.batchsize, shuffle=False):
         loss, acc1, acc5 = val_fn(inp, res)
         val_loss += loss
         val_acc1 += acc1
@@ -348,18 +348,18 @@ def make_confusion_db(name, fname, X, Y):
     cases = len(X) if not args.limit else min(args.limit, len(X))
     pred_out = numpy.memmap(
         cfile, dtype=numpy.float32, shape=(cases, cats), mode='w+')
-    test_batches = len(range(0, cases, args.batchsize))
+    test_batches = len(range(0, cases, model.batchsize))
     p = progress(test_batches)
     i = 0
     accn = {}
-    for inp, res in iterate_minibatches(X, Y, args.batchsize, shuffle=False):
-        s = i * args.batchsize
-        if s + args.batchsize > pred_out.shape[0]:
+    for inp, res in iterate_minibatches(X, Y, model.batchsize, shuffle=False):
+        s = i * model.batchsize
+        if s + model.batchsize > pred_out.shape[0]:
             inp = inp[:pred_out.shape[0] - s]
-        pred_out[s:s+args.batchsize, :] = debug_fn(inp)
+        pred_out[s:s+model.batchsize, :] = debug_fn(inp)
         i += 1
         p.update(i)
-        topindex = numpy.argsort(-pred_out[s:s+args.batchsize], axis=1)
+        topindex = numpy.argsort(-pred_out[s:s+model.batchsize], axis=1)
         for index in range(topindex.shape[0]):
             confusion = numpy.where(topindex[index] == res[index])[0][0]
             accn[confusion] = accn.get(confusion, 0) + 1
@@ -408,7 +408,7 @@ def make_response_probe(image):
 def make_response_file(name, fname, cname, X, Y, use_first=False):
     global args
     task("Evaluating response regions on %s" % name)
-    assert args.batchsize == 256
+    assert model.batchsize == 256
     cases = len(X) if not args.limit else min(args.limit, len(X))
     if use_first:
         cfile = open(os.path.join(args.outdir, cname), 'r')
