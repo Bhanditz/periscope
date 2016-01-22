@@ -99,7 +99,7 @@ class Model:
         if self.l2map is not None:
             loss += regularize_layer_params_weighted(
                 self.layer_map(self.l2map), l2) * self.l2reg
-        elif self.l2map:
+        elif self.l2reg:
             loss += regularize_network_params(network, l2) * self.l2reg
         if self.l1map is not None:
             loss += regularize_layer_params_weighted(
