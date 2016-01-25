@@ -38,6 +38,16 @@ def apply_prelu_bn(layer):
     out = layer.prelu = ParametricRectifierLayer(bn)
     return out
 
+def apply_qn_only(layer):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    bn = layer.bn = QuickNormLayer(layer)
+    return bn
+
 def apply_prelu_qn(layer):
     nonlinearity = getattr(layer, 'nonlinearity', None)
     if nonlinearity is not None:
@@ -229,7 +239,7 @@ def ren_gadget(network_in, conv_add, stride=1, pad=0, name=None):
         W=HeNormal(1.372))
     network_c = apply_prelu_bn_ren(network_c)
     conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
+    conv.prelu.name = name + 'r'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = QuickNormLayer(network_p)
     return ConcatLayer((network_p, network_c), name=name + 'c')
@@ -379,7 +389,7 @@ def sren_gadget(network_in, conv_add, stride=1, pad=0, name=None):
         W=HeNormal(1.0))
     network_c = apply_prelu_bn_sren(network_c)
     conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
+    conv.prelu.name = name + 'r'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = QuickNormLayer(network_p)
     return ConcatLayer((network_p, network_c), name=name + 'c')
@@ -489,14 +499,13 @@ def ww4(network, cropsz, batchsz):
     return network
 
 ww4.cropsz = 96
-ww4.batchsize = 256
-ww4.l2reg = 5e-3
+ww4.batchsize = 64
+ww4.l2reg = 0
 ww4.ramp_lr = False
 ww4.learning_rates = numpy.concatenate((
   [0.01] * 13,
   [0.001] * 2,
-  [0.0001] * 13,
-  [0.00001] * 13
+  [0.0001] * 15
 ))
 
 def smart(network, cropsz, batchsz):
@@ -1291,7 +1300,7 @@ def cen_gadget(network_in, conv_add, stride=1, pad=0, name=None):
         W=HeNormal(1.372))
     network_c = apply_relu_bn_cen(network_c)
     conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
+    conv.prelu.name = name + 'r'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = QuickNormLayer(network_p)
     return ConcatLayer((network_p, network_c), name=name + 'c')
@@ -1363,7 +1372,7 @@ cen.l1map = {
 def wta_gadget(network_in, conv_add, stride=1, pad=0, wta=0, name=None):
     network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
         W=HeNormal(1.372), name=name+'i')
-    network_c = apply_prelu_bn_wta(network_c)
+    network_c = apply_prelu_bn_ren(network_c)
     conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
         stride=stride, pad=pad, name=name,
         W=HeNormal(1.372))
@@ -1371,7 +1380,7 @@ def wta_gadget(network_in, conv_add, stride=1, pad=0, wta=0, name=None):
     if (wta > 1):
         network_c = FeatureWTALayer(network_c, wta)
     conv.bn.name = name + 'b'
-    conv.prelu.name = name + 'p'
+    conv.prelu.name = name + 'r'
     network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
     network_p = QuickNormLayer(network_p)
     return ConcatLayer((network_p, network_c), name=name + 'c')
@@ -1385,7 +1394,7 @@ def wta(network, cropsz, batchsz):
     # 113*113*32 = 408608, rf:3x3
     network = Conv2DLayer(network, 32, (3, 3),
         W=HeNormal(1.372), name="conv1")
-    network = apply_prelu_bn_wta(network)
+    network = apply_prelu_bn_ren(network)
     # 2nd. Data size 111 -> 55
     # 55*55*64 = 193600, rf:5x5
     # 32 + 32 = 64 ch
@@ -1405,7 +1414,7 @@ def wta(network, cropsz, batchsz):
     # 11*11*128 = 15488, rf:33x33
     network = Conv2DLayer(network, 128, (3, 3),
         W=HeNormal(1.372), name="conv5")
-    network = apply_prelu_bn_wta(network)
+    network = apply_prelu_bn_ren(network)
 
     # 5th. Data size 11 -> 5
     # 5*5*256 = 6400, rf:49x49
@@ -1415,12 +1424,12 @@ def wta(network, cropsz, batchsz):
     # 6th. Data size 5 -> 3
     # 3*3*384 = 3456, rf:81x81
     # 128 + 256 = 384 ch
-    network = wta_gadget(network, 128, name="goo7")
+    network = wta_gadget(network, 128, name="goo7", wta=8)
 
     # 7th. Data size 3 -> 1, 592 + 512 ch
     # 1*1*896 = 896, rf:113x113
     # 384 + 512 = 896 ch
-    network = wta_gadget(network, 512, name="goo8", wta=2)
+    network = wta_gadget(network, 512, name="goo8", wta=16)
 
     return network
 
@@ -1438,4 +1447,776 @@ wta.l1map = {
     'goo8': 1,
     'softmax': 1
 }
+
+def bnww(network, cropsz, batchsz):
+    # 1st. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn_sren(network)
+
+    # 2nd. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn_sren(network)
+
+    # Max pool. Data size 96->48
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 3rd. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn_sren(network)
+
+    # 4th. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+    network = apply_prelu_bn_sren(network)
+
+    # Max pool. Data size 48->24
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 5th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv5')
+    network = apply_prelu_bn_sren(network)
+
+    # 6th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv6')
+    network = apply_prelu_bn_sren(network)
+
+    # Max pool.  Data size 24->12
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 7th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv7')
+    network = apply_prelu_bn_sren(network)
+
+    # 8th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv8')
+    network = apply_prelu_bn_sren(network)
+
+    # Max pool.  Data size 12->6
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 9th. Data size 6->1
+    network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
+    network = apply_prelu_bn_sren(network)
+
+    return network
+
+bnww.cropsz = 96
+bnww.batchsize = 64
+bnww.l2reg = 5e-3
+bnww.ramp_lr = True
+bnww.learning_rates = numpy.concatenate((
+  [0.01] * 13,
+  [0.001] * 13,
+  [0.0001] * 13,
+  [0.00001] * 13
+))
+
+def swa_gadget(network_in, conv_add, stride=1, pad=0, wta=0, wtap=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_sren(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    network_c = apply_prelu_bn_sren(network_c)
+    if (wta > 1):
+        network_c = FeatureWTALayer(network_c, wta)
+    conv.bn.name = name + 'b'
+    conv.prelu.name = name + 'r'
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    if (wtap > 1):
+        network_p = FeatureWTALayer(network_p, wtap)
+    network_p = QuickNormLayer(network_p)
+    return ConcatLayer((network_p, network_c), name=name + 'c')
+
+def swa(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 128, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 128, wta=16, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 512, wta=16, name="goo8")
+
+    return network
+
+swa.cropsz = 97
+swa.batchsize = 256
+swa.l2reg = 1e-2
+swa.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+swa.l1reg = 1e-2
+swa.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def sww(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 128, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 2)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 128, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 128, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 512, wta=8, name="goo8")
+
+    return network
+
+sww.cropsz = 97
+sww.batchsize = 256
+sww.l2reg = 1e-2
+sww.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+sww.l1reg = 1e-2
+sww.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def swx(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 180, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 2)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 256, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 256, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 1024, wta=8, name="goo8")
+
+    return network
+
+swx.cropsz = 97
+swx.batchsize = 256
+swx.l2reg = 1e-2
+swx.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+swx.l1reg = 1e-2
+swx.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def swy(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 4)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 256, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 256, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 1024, wta=8, name="goo8")
+
+    return network
+
+swy.cropsz = 97
+swy.batchsize = 256
+swy.l2reg = 1e-2
+swy.learning_rates = numpy.logspace(-2, -5.33333, 40, dtype=numpy.float32)
+swy.l1reg = 1e-2
+swy.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def swz(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 4)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 256, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 256, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 1024, wta=4, name="goo8")
+
+    return network
+
+swz.cropsz = 97
+swz.batchsize = 256
+swz.l2reg = 1e-2
+swz.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+swz.l1reg = 1e-2
+swz.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def swh(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 4)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 256, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 256, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 1020, wta=6, name="goo8")
+
+    return network
+
+swh.cropsz = 97
+swh.batchsize = 256
+swh.l2reg = 1e-2
+swh.learning_rates = numpy.logspace(-2, -4.5, 30, dtype=numpy.float32)
+swh.l1reg = 1e-2
+swh.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def sfy_gadget(network_in, conv_add, stride=1, pad=0, wta=0, name=None):
+    network_c = Conv2DLayer(network_in, conv_add // 2, (1, 1),
+        W=HeNormal(1.372), name=name+'i')
+    network_c = apply_prelu_bn_sren(network_c)
+    conv = network_c = Conv2DLayer(network_c, conv_add, (3, 3),
+        stride=stride, pad=pad, name=name,
+        W=HeNormal(1.372))
+    if (wta > 1):
+        network_c = apply_qn_only(network_c)
+        network_c = FeatureWTALayer(network_c, wta)
+    else:
+        network_c = apply_prelu_bn_sren(network_c)
+    network_p = MaxPool2DLayer(network_in, (3, 3), stride=stride, pad=pad)
+    network_p = QuickNormLayer(network_p)
+    return ConcatLayer((network_p, network_c), name=name + 'c')
+
+def sfy(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = sfy_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = sfy_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = sfy_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 4)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = sfy_gadget(network, 256, wta=4, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = sfy_gadget(network, 256, wta=4, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = sfy_gadget(network, 1024, wta=8, name="goo8")
+
+    return network
+
+sfy.cropsz = 97
+sfy.batchsize = 256
+sfy.l2reg = 1e-2
+sfy.learning_rates = numpy.logspace(-2, -5.33333, 40, dtype=numpy.float32)
+sfy.l1reg = 1e-2
+sfy.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def sfe(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = sfy_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = sfy_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = sfy_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    network = FeatureWTALayer(network, 8)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = sfy_gadget(network, 256, wta=8, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = sfy_gadget(network, 256, wta=8, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = sfy_gadget(network, 1024, wta=8, name="goo8")
+
+    return network
+
+sfe.cropsz = 97
+sfe.batchsize = 256
+sfe.l2reg = 1e-2
+sfe.learning_rates = numpy.logspace(-2, -5.33333, 40, dtype=numpy.float32)
+sfe.l1reg = 1e-2
+sfe.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def sey(network, cropsz, batchsz):
+    network = ZeroGrayLayer(network)
+
+    # 1st. Data size 97 -> 95
+    # 113*113*32 = 408608, rf:3x3
+    network = Conv2DLayer(network, 32, (3, 3),
+        W=HeNormal(1.0), name="conv1")
+    network = apply_prelu_bn_sren(network)
+    # 2nd. Data size 95 -> 47
+    # 55*55*64 = 193600, rf:5x5
+    # 32 + 32 = 64 ch
+    network = swa_gadget(network, 32, stride=2, name="goo2")
+
+    # 3nd. Data size 47 -> 23
+    # 27*27*96 = 69984, rf:9x9
+    # 64 + 32 = 96 ch
+    network = swa_gadget(network, 32, stride=2, name="goo3")
+
+    # 3rd.  Data size 23 -> 11, 192 + 144
+    # 13*13*224 = 37856, rf:17x17
+    # 96 + 128 = 224 ch
+    network = swa_gadget(network, 128, stride=2, name="goo4")
+
+    # 4th.  Data size 11 -> 11
+    # 11*11*128 = 15488, rf:33x33
+    network = Conv2DLayer(network, 256, (3, 3), pad=1,
+        W=HeNormal(1.0), name="conv5")
+    network = apply_prelu_bn_sren(network)
+    # network = FeatureWTALayer(network, 4)
+
+    # 5th. Data size 11 -> 5
+    # 5*5*256 = 6400, rf:49x49
+    # 128 + 128 = 256 ch
+    network = swa_gadget(network, 256, stride=2, name="goo6")
+
+    # 6th. Data size 5 -> 3
+    # 3*3*384 = 3456, rf:81x81
+    # 128 + 256 = 384 ch
+    network = swa_gadget(network, 256, name="goo7")
+
+    # 7th. Data size 3 -> 1, 592 + 512 ch
+    # 1*1*896 = 896, rf:113x113
+    # 384 + 512 = 896 ch
+    network = swa_gadget(network, 1024, name="goo8")
+
+    return network
+
+sey.cropsz = 97
+sey.batchsize = 256
+sey.l2reg = 1e-2
+sey.learning_rates = numpy.logspace(-2, -5.33333, 40, dtype=numpy.float32)
+sey.l1reg = 1e-2
+sey.l1map = {
+    'conv5': 1,
+    'goo6i': 1,
+    'goo6': 1,
+    'goo7i': 1,
+    'goo7': 1,
+    'goo8i': 1,
+    'goo8': 1,
+    'softmax': 1
+}
+
+def ww3wd(network, cropsz, batchsz):
+    # 1st. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+    # 2nd. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+
+    # Max pool. Data size 96->48
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 3rd. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+    # 4th. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+
+    # Max pool. Data size 48->24
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 5th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv5')
+    # 6th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv6')
+
+    # Max pool.  Data size 24->12
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 7th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv7')
+
+    # 8th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv8')
+
+    # Max pool.  Data size 12->3
+    network = MaxPool2DLayer(network, (4, 4), stride=4)
+
+    # 9th. Data size 3->1
+    network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
+
+    return network
+
+ww3wd.cropsz = 96
+ww3wd.batchsize = 64
+ww3wd.l2reg = 5e-3
+ww3wd.ramp_lr = False
+ww3wd.learning_rates = numpy.concatenate((
+  [0.01] * 20,
+  [0.001] * 20,
+  [0.0001] * 20
+))
+
+def ww4wd(network, cropsz, batchsz):
+    # 1st. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+    # 2nd. Data size 96->96
+    network = Conv2DLayer(network, 64, (3, 3), pad='same', W=HeUniform('relu'))
+
+    # Max pool. Data size 96->48
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 3rd. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+    # 4th. Data size 48->48
+    network = Conv2DLayer(network, 128, (3, 3), pad='same', W=HeUniform('relu'))
+
+    # Max pool. Data size 48->24
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 5th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv5')
+    # 6th. Data size 24->24
+    network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv6')
+
+    # Max pool.  Data size 24->12
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 7th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv7')
+
+    # 8th. Data size 12->12
+    network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        W=HeUniform('relu'), name='conv8')
+
+    # Max pool.  Data size 12->6
+    network = MaxPool2DLayer(network, (2, 2), stride=2)
+
+    # 9th. Data size 6->1
+    network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
+
+    return network
+
+ww4wd.cropsz = 96
+ww4wd.batchsize = 64
+ww4wd.l2reg = 5e-3
+ww4wd.ramp_lr = False
+ww4wd.learning_rates = numpy.concatenate((
+  [0.01] * 32,
+  [0.001] * 32,
+  [0.0001] * 32
+))
 

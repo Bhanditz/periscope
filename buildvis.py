@@ -27,6 +27,7 @@ parser.add_argument('-s', '--set', help='image set to evaluate on', choices=['te
 parser.add_argument('-d', '--devkit', help='devkit directory containing categories.txt', default='mp-dev_kit')
 parser.add_argument('-w', '--wrongskip', help='penalize images that are not correclty classified', type=bool, default=False)
 parser.add_argument('-c', '--count', help='number of examples to output', type=int, default=50)
+parser.add_argument('-l', '--layer', help='layer to visualize', default=None)
 args = parser.parse_args()
 
 imsz = 128
@@ -97,21 +98,28 @@ if args.wrongskip:
     for layer in layers:
         responses[layer.name][wrong,:] -= 1
 
-# Collect best 10 results for each channel of each layer
+# Collect best N results for each channel of each layer
+if args.layer:
+    nameset = set(args.layer.split(','))
+    layerlist = [lay for lay in layers if lay.name in nameset]
+else:
+    layerlist = [lay for lay in layers if lay.name]
+
 examples = {}
-for layer in layers:
+for layer in layerlist:
     best = (-responses[layer.name]).argsort(axis=0)[:args.count,:]
     examples[layer.name] = best
 
 task("Generating response images".format(args.set))
 i = 0
+
 p = progress(args.count * sum([b.shape[1] for b in examples.values()]))
 
 # Generate response image for each
-for layer in reversed([lay for lay in layers if lay.name == 'conv8']):
+for layer in reversed(layerlist):
     best = examples[layer.name]
-    for j in range(best.shape[1]):
-        for k in range(args.count):
+    for k in range(args.count):
+        for j in range(best.shape[1]):
             imdata = X_test[best[k, j]]
             if len(shapes[layer.name]) == 4:
                 flatloc = responselocs[layer.name][best[k, j], j]
