@@ -22,9 +22,9 @@ class Network:
         self.target_var = theano.tensor.ivector('Y')
         self.epoch_var = theano.tensor.fscalar('epoch')
         self.acc = {'train': [], 'val': []}
-        # rescale [-128...127] to (-1...1)
+        # rescale [-128...127] to [0...1]
         scaled_input = (theano.tensor.cast(
-            self.input_var, 'float32') / 128.0) + (0.5/128)
+            self.input_var, 'float32') + 128) / 255
 
         # Build network from RGB crop_size images to output_size outupts,
         # with hidden layers between.
@@ -103,6 +103,18 @@ class Network:
         return [layer for layer in lasagne.layers.get_all_layers(self.network)
                 if layer.name]
 
+    def layer_map(self, mapping):
+        import lasagne
+        return dict([(layer, mapping[layer.name])
+                   for layer in lasagne.layers.get_all_layers(self.network)
+                   if layer.name in mapping])
+
+    def layer_named(self, name):
+        import lasagne
+        for layer in lasagne.layers.get_all_layers(self.network):
+            if layer.name == name:
+                return layer
+
     def eval_fn(self):
         if not self._eval_fn:
             import theano, lasagne
@@ -169,6 +181,10 @@ class Network:
 
     def train(self, corpus, pretty=None):
         # Build training function
+        if pretty:
+            import lasagne
+            pretty.subtask("Compiling training function: %d params." %
+                lasagne.layers.count_params(self.network))
         train_fn = self.train_fn()
         if pretty:
             eval_fn = self.eval_fn()
@@ -176,8 +192,11 @@ class Network:
             if epoch <= self.epoch:
                 continue
             # The main training loop
-            training_set = corpus.get('train',
-                batch_size=self.batch_size, shape=self.crop_size, randomize=True)
+            training_set = corpus.get(
+                'train',
+                batch_size=self.batch_size,
+                shape=self.crop_size,
+                randomize=True)
             batch_count = len(training_set)
             if pretty:
                 pretty.task("Starting epoch {}".format(epoch))

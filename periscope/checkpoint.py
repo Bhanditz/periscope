@@ -13,20 +13,22 @@ class Checkpoint:
     def __init__(self, directory):
         self.directory = directory
 
+    def mdlpat(self, name):
+        return re.match(r'^epoch-(\d+)\.mdl$', name)
+
     def exists(self):
-        return os.path.isdir(self.directory)
+        return os.path.isdir(self.directory) and [
+           n for n in os.listdir(self.directory) if self.mdlpat(n)]
 
     def latest_checkpoint_number(self):
         # scan directory for files
         try:
-            files = [n for n in os.listdir(self.directory)
-                     if re.match(r'^epoch-\d+\.mdl$', n)]
+            files = [n for n in os.listdir(self.directory) if self.mdlpat(n)]
         except:
             return None
         if len(files) == 0:
             return None
-        return max([int(re.match(r'^epoch-(\d+)\.mdl$', x).group(1))
-                    for x in files])
+        return max([int(self.mdlpat(x).group(1)) for x in files])
 
     def load(self, epoch=None):
         if epoch is None:
@@ -41,6 +43,7 @@ class Checkpoint:
             epoch = pickle.load(f)
             training = pickle.load(f)
             validation = pickle.load(f)
+            classname = None
             if formatver >= 2:
                 classname = pickle.load(f)
             return (state, epoch, training, validation, classname)

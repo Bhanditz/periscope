@@ -9,5 +9,5 @@ def class_for_shortname(name):
     if '.' in name:
         full_name = name
     else:
-        full_name = 'exp.' + name.lower() + '.' + name.captialize()
+        full_name = 'exp.' + name.lower() + '.' + name.capitalize()
     return class_for_name(full_name)

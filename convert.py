@@ -12,5 +12,5 @@ parser.add_argument('--width', help='pixel width', type=int, default=128)
 parser.add_argument('--height', help='pixel height', type=int, default=128)
 args = parser.parse_args()
 
-prepare_corpus(args.devkit, args.images, args.outdir,
+prepare_corpus(args.devkit, args.images, args.corpus,
     width=args.width, height=args.height, seed=1, pretty=pretty)
