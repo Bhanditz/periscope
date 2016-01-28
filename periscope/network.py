@@ -81,7 +81,8 @@ class Network:
     def learning_rate(self):
         import theano, lasagne
         epoch_num = theano.tensor.cast(self.epoch_var, 'int32')
-        learning_rates_array = theano.tensor.constant(self.learning_rates)
+        learning_rates_array = theano.tensor.constant(
+            self.learning_rates.astype(np.float32))
         learning_rate = learning_rates_array[epoch_num]
         if self.ramp_learning_rate:
             progress = theano.tensor.cast(self.epoch_var - epoch_num, 'float32')
