@@ -19,7 +19,7 @@ SRAW = $(MMAP_FILES)/small/train.labels.db \
        #$(MMAP_FILES)/small/val.images.db \
        #$(MMAP_FILES)/small/test.images.db \
 
-IMTGZ = $(MMAP_FILES)/data.tar.gz
+IMTGZ = $(MP_DATA)/data.tar.gz
 IMDATA = $(MP_DATA)/images/train/y/yard/00001000.jpg
 
 all: $(IMDATA) solve
