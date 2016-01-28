@@ -149,8 +149,8 @@ class Model:
         if not self._eval_fn:
             self._eval_fn = theano.function([
                 self.input_var,
-                theano.Param(self.flip_var, default=1),
-                theano.Param(self.crop_var, default=self.center)],
+                theano.In(self.flip_var, value=1),
+                theano.In(self.crop_var, value=self.center)],
                 self.prediction,
                 allow_input_downcast=True)
         return self._eval_fn
@@ -160,8 +160,8 @@ class Model:
             self._acc_fn = theano.function([
                 self.input_var,
                 self.target_var,
-                theano.Param(self.flip_var, default=1),
-                theano.Param(self.crop_var, default=self.center)],
+                theano.In(self.flip_var, value=1),
+                theano.In(self.crop_var, value=self.center)],
                 [self.loss.mean(), self.test_1_acc, self.test_5_acc],
                 allow_input_downcast=True)
         return self._acc_fn
@@ -173,8 +173,8 @@ class Model:
                 self.target_var,
                 self.learning_rate_var,
                 self.epoch_var,
-                theano.Param(self.flip_var, default=1),
-                theano.Param(self.crop_var, default=self.center)],
+                theano.In(self.flip_var, value=1),
+                theano.In(self.crop_var, value=self.center)],
                 self.train_loss,
                 updates=self.updates,
                 allow_input_downcast=True,
@@ -187,8 +187,8 @@ class Model:
             outs = lasagne.layers.get_output(named, deterministic=True)
             self._debug_fn = theano.function([
                 self.input_var,
-                theano.Param(self.flip_var, default=1),
-                theano.Param(self.crop_var, default=self.center)],
+                theano.In(self.flip_var, value=1),
+                theano.In(self.crop_var, value=self.center)],
                 outs,
                 allow_input_downcast=True)
         return self._debug_fn
