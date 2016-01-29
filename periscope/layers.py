@@ -39,7 +39,7 @@ class QuickNormLayer(lasagne.layers.Layer):
         if any(size is None for size in shape):
             raise ValueError("QuickNormLayer needs specified input sizes for "
                              "all axes not normalized over.")
-        self.mean = self.add_param(inv_std, shape, 'mean',
+        self.mean = self.add_param(mean, shape, 'mean',
                                       trainable=False, regularizable=False)
         self.inv_std = self.add_param(inv_std, shape, 'inv_std',
                                       trainable=False, regularizable=False)
@@ -91,6 +91,73 @@ class QuickNormLayer(lasagne.layers.Layer):
 
         # normalize
         normalized = (input - mean) * inv_std
+        return normalized
+
+class QuickMeanLayer(lasagne.layers.Layer):
+    def __init__(self, incoming,
+                 axes='auto', epsilon=1e-4, alpha=0.1,
+                 mode='low_mem',
+                 mean=lasagne.init.Constant(0),
+                 **kwargs):
+        super(QuickMeanLayer, self).__init__(incoming, **kwargs)
+
+        if axes == 'auto':
+            # default: normalize over all but the second axis
+            axes = (0,) + tuple(range(2, len(self.input_shape)))
+        elif isinstance(axes, int):
+            axes = (axes,)
+        self.axes = axes
+
+        self.epsilon = epsilon
+        self.alpha = alpha
+        self.mode = mode
+
+        # create parameters, ignoring all dimensions in axes
+        shape = [size for axis, size in enumerate(self.input_shape)
+                 if axis not in self.axes]
+        if any(size is None for size in shape):
+            raise ValueError("QuickNormLayer needs specified input sizes for "
+                             "all axes not normalized over.")
+        self.mean = self.add_param(mean, shape, 'mean',
+                                      trainable=False, regularizable=False)
+
+    def get_output_for(self, input, deterministic=False, **kwargs):
+        input_mean = input.mean(self.axes)
+
+        # Decide whether to use the stored averages or mini-batch statistics
+        use_averages = kwargs.get('batch_norm_use_averages',
+                                  deterministic)
+        if use_averages:
+            mean = self.mean
+        else:
+            mean = input_mean
+
+        # Decide whether to update the stored averages
+        update_averages = kwargs.get('batch_norm_update_averages',
+                                     not deterministic)
+        if update_averages:
+            # Trick: To update the stored statistics, we create memory-aliased
+            # clones of the stored statistics:
+            running_mean = theano.clone(self.mean, share_inputs=False)
+            # set a default update for them:
+            running_mean.default_update = ((1 - self.alpha) * running_mean +
+                                           self.alpha * input_mean)
+            # and make sure they end up in the graph without participating in
+            # the computation (this way their default_update will be collected
+            # and applied, but the computation will be optimized away):
+            mean += 0 * running_mean
+
+        # prepare dimshuffle pattern inserting broadcastable axes as needed
+        param_axes = iter(range(input.ndim - len(self.axes)))
+        pattern = ['x' if input_axis in self.axes
+                   else next(param_axes)
+                   for input_axis in range(input.ndim)]
+
+        # apply dimshuffle pattern to all parameters
+        mean = mean.dimshuffle(pattern)
+
+        # normalize
+        normalized = (input - mean)
         return normalized
 
 class ZeroReluLayer(lasagne.layers.Layer):

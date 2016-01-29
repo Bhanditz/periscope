@@ -44,7 +44,32 @@ class Corpus:
             assert len(self.X[kind]) == len(self.names[kind])
             assert len(self.Y[kind]) == len(self.names[kind])
 
-    def get(self, kind=None, batch_size=256, shape=None, randomize=False):
+    def get(self, index, kind=None, shape=None, randomize=False):
+        """
+        Gets a single image as a (image, label, name) triple, arranged
+        like a batch with batchsize of 1.
+        """
+        x = self.X[kind][index:index+1,:,:,:]
+        y = self.Y[kind][index:index+1]
+        name = self.names[kind][index:index+1]
+        cropv = X.shape[2] - shape[0]
+        croph = X.shape[3] - shape[1]
+
+        if randomize:
+            # random horizontal flip
+            if np.random.randint(2):
+                x = x[:,:,:,::-1]
+                # randomize crop
+                top = np.random.randint(cropv + 1)
+                left = np.random.randint(croph + 1)
+            else:
+                # center crop
+                top = cropv // 2
+                left = croph // 2
+        x = x[:,:,left:left+self.shape[0],top:top+self.shape[1]]
+        yield (x, y, n)
+
+    def batches(self, kind=None, batch_size=256, shape=None, randomize=False):
         """
         Returns an iterable.
         """
@@ -109,15 +134,19 @@ class Corpus:
 
 class CorpusIterable:
     def __init__(self, X, Y, names, batch_size, shape, randomize):
-       self.X = X
-       self.Y = Y
-       self.names = names
-       self.batch_size = batch_size
-       self.shape = shape
-       self.randomize = randomize
+        self.X = X
+        self.Y = Y
+        self.names = names
+        self.batch_size = batch_size
+        self.shape = shape
+        self.randomize = randomize
 
     def __len__(self):
-       return len(self.X) // self.batch_size + (len(self.X) % self.batch_size > 0)
+        return len(self.X) // self.batch_size + (
+            len(self.X) % self.batch_size > 0)
+
+    def count(self):
+        return len(self.X)
 
     def __iter__(self):
         end = len(self.X)

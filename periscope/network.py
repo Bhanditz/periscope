@@ -99,20 +99,19 @@ class Network:
                 learning_rate=self.learning_rate(),
                 momentum=0.9)
 
-    def named_layers(self):
+    def all_layers(self):
         import lasagne
-        return [layer for layer in lasagne.layers.get_all_layers(self.network)
-                if layer.name]
+        return lasagne.layers.get_all_layers(self.network)
+
+    def named_layers(self):
+        return [layer for layer in self.all_layers() if layer.name]
 
     def layer_map(self, mapping):
-        import lasagne
         return dict([(layer, mapping[layer.name])
-                   for layer in lasagne.layers.get_all_layers(self.network)
-                   if layer.name in mapping])
+                   for layer in self.all_layers() if layer.name in mapping])
 
     def layer_named(self, name):
-        import lasagne
-        for layer in lasagne.layers.get_all_layers(self.network):
+        for layer in self.all_layers():
             if layer.name == name:
                 return layer
 
@@ -139,16 +138,61 @@ class Network:
                 allow_input_downcast=True)
         return self._train_fn
 
-    def debug_fn(self):
-        if not self._debug_fn:
-            import theano, lasagne
-            named = self.named_layers()
-            outs = lasagne.layers.get_output(named, deterministic=True)
-            self._debug_fn = theano.function(
-                [self.input_var],
-                outs,
-                allow_input_downcast=True)
-        return self._debug_fn
+    def debug_fn(self, layers=None):
+        import lasagne, theano
+        if layers is None:
+            if self._debug_fn:
+                return self._debug_fn
+            select = self.all_layers()
+        else:
+            select = layers
+        outs = lasagne.layers.get_output(select, deterministic=True)
+        result = theano.function(
+            [self.input_var],
+            outs,
+            allow_input_downcast=True)
+        if layers is None:
+            self._debug_fn = result
+        return result
+
+    def conv_padding(self, pad, filter_size):
+        if pad == 'full':
+            return tuple(s - 1 for s in filter_size)
+        if pad == 'same':
+            return tuple(s // 2 for s in filter_size)
+        if pad == 'valid':
+            return tuple(0 for s in filter_size)
+        if isinstance(pad, int):
+            return tuple(pad for s in filter_size)
+        assert isinstance(pad, tuple)
+        return pad
+
+    def conv_stride(self, stride, filter_size):
+        if isinstance(stride, int):
+            return tuple(stride for s in filter_size)
+        assert isinstance(stride, tuple)
+        return stride
+
+    def unroll_convolution(self, img, layer, coord):
+        """
+        Given an RGBxhxw input image and a specific activation in a convolutional
+        layer, returns the tensor of contributions of each weight to that
+        specific unit in that specific situation.
+        """
+        import lasagne
+        debug_fn = self.debug_fn()
+        activations = debug_fn(img[np.newaxis,:])
+        acts = dict(zip(self.get_all_layers(), activations))
+        pad = self.conv_padding(layer.pad, layer.filter_size)
+        stride = self.conv_stride(layer.stride, layer.filter_size)
+        sect = tuple(slice(c * s, c * s + f) for c, s, f in
+                zip(coord, stride, layer.filter_size))
+        input_layer = layer.input_layer
+        ia = acts[input_layer]
+        padded_input = np.pad(ia, (0,) + pad, mode='constant')
+        seen_input = padded_input[(slice(None), ) + sect]
+        weights = layer.W.get_value()
+        return seen_input * weights
 
     def named_layers(self):
         import lasagne
@@ -193,7 +237,7 @@ class Network:
             if epoch <= self.epoch:
                 continue
             # The main training loop
-            training_set = corpus.get(
+            training_set = corpus.batches(
                 'train',
                 batch_size=self.batch_size,
                 shape=self.crop_size,
@@ -211,7 +255,7 @@ class Network:
             p.finish()
             # Evaluation
             for kind in ['train', 'val']:
-                val_set = corpus.get(kind, shape=self.crop_size)
+                val_set = corpus.batches(kind, shape=self.crop_size)
                 acc1, acc5 = self.eval_1_5(kind, eval_fn, val_set)
                 self.acc[kind].append((0, acc1, acc5))
             if pretty:
@@ -249,3 +293,4 @@ class Network:
         self.checkpoint.save(
             (state, self.epoch, self.acc['train'], self.acc['val'],
              self.__class__.__module__ + '.' + self.__class__.__qualname__))
+

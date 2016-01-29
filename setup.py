@@ -20,6 +20,7 @@ setup(
         'matplotlib',
         'seaborn',
         'scipy',
+        'jupyter',
         'termcolor',
         'Theano >= 0.7.0'
     ],
