@@ -44,7 +44,7 @@ class Corpus:
             assert len(self.X[kind]) == len(self.names[kind])
             assert len(self.Y[kind]) == len(self.names[kind])
 
-    def get(self, index, kind=None, shape=None, randomize=False):
+    def get(self, kind=None, index=0, shape=None, randomize=False):
         """
         Gets a single image as a (image, label, name) triple, arranged
         like a batch with batchsize of 1.
@@ -52,22 +52,22 @@ class Corpus:
         x = self.X[kind][index:index+1,:,:,:]
         y = self.Y[kind][index:index+1]
         name = self.names[kind][index:index+1]
-        cropv = X.shape[2] - shape[0]
-        croph = X.shape[3] - shape[1]
+        cropv = x.shape[2] - shape[0]
+        croph = x.shape[3] - shape[1]
 
         if randomize:
             # random horizontal flip
             if np.random.randint(2):
                 x = x[:,:,:,::-1]
-                # randomize crop
-                top = np.random.randint(cropv + 1)
-                left = np.random.randint(croph + 1)
-            else:
-                # center crop
-                top = cropv // 2
-                left = croph // 2
-        x = x[:,:,left:left+self.shape[0],top:top+self.shape[1]]
-        yield (x, y, n)
+            # randomize crop
+            top = np.random.randint(cropv + 1)
+            left = np.random.randint(croph + 1)
+        else:
+            # center crop
+            top = cropv // 2
+            left = croph // 2
+        x = x[:,:,left:left+shape[0],top:top+shape[1]]
+        return (x, y, name)
 
     def batches(self, kind=None, batch_size=256, shape=None, randomize=False):
         """

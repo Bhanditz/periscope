@@ -244,7 +244,8 @@ class Network:
                 randomize=True)
             batch_count = len(training_set)
             if pretty:
-                pretty.task("Starting epoch {}".format(epoch))
+                pretty.task("Starting epoch {} for network {}".format(
+                    epoch, self.__class__.__name__))
                 p = pretty.progress(batch_count)
             for i, training_batch in enumerate(training_set):
                 epoch_f = epoch + i / float(batch_count)

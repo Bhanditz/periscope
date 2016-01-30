@@ -14,6 +14,48 @@ class ZeroPreluLayer(lasagne.layers.Layer):
     def get_output_for(self, input, **kwargs):
         return (input - 0.2) * 1.25
 
+
+# ***********
+# ***********
+# xx       xx
+# xx       xx
+# xx  ooo  xx
+# xx  ooo  xx
+# xx  ooo  xx
+# xx       xx
+# xx       xx
+# ***********
+# ***********
+class LandmarkLayer(lasagne.layers.Layer):
+    def __init__(self, incoming, **kwargs):
+        super(LandmarkLayer, self).__init__(incoming, **kwargs)
+        dims = self.input_layer.output_shape[2:]
+        cy = dims[0] // 2
+        cx = dims[1] // 2
+        landmark = np.zeros((1, 5) + dims, dtype=np.float32)
+        # Top edge
+        landmark[0, 0, :2, :] = 1
+        # Bottom edge
+        landmark[0, 1, -2:, :] = 1
+        # Left edge
+        landmark[0, 2, :, :2] = 1
+        # Right edge
+        landmark[0, 3, :, -2:] = 1
+        # Center
+        landmark[0, 4, cy-1:cy+2, cx-1:cx+2] = 1
+        self.landmark = theano.tensor.constant(landmark)
+
+    def get_output_shape_for(self, input_shape):
+        shape = list(input_shape)
+        shape[1] += 5
+        return tuple(shape)
+
+    def get_output_for(self, input, **kwargs):
+        return theano.tensor.concatenate([
+            input,
+            theano.tensor.repeat(self.landmark, input.shape[0], axis=0)
+        ], axis=1)
+
 class QuickNormLayer(lasagne.layers.Layer):
     def __init__(self, incoming,
                  axes='auto', epsilon=1e-4, alpha=0.1,

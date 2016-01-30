@@ -65,25 +65,31 @@ def layer_input_area(layer, area):
     return ((layer.input_layer, area), )
     
 def max_input_area(area1, area2):
-    return slice(min(area1.start, area2.start), max(area1.stop, area2.stop))
+    return tuple(
+        slice(min(a1.start, a2.start), max(a1.stop, a2.stop))
+        for a1, a2 in zip(area1, area2))
 
 def calc_conv_input_area(layer, area):
-    if area.length == 0:
-       return tuple(slice(0, m) for m in layer.get_output_shape()[2:])
+    input_layer = layer.input_layer
+    if len(area) == 0:
+       return (input_layer,
+               tuple(slice(0, m) for m in input_layer.output_shape[2:]))
     pad = conv_padding(layer.pad, layer.filter_size)
     stride = conv_stride(layer.stride, layer.filter_size)
-    area = tuple(
-            slice(c.start * s - p, c.stop * s + f - p) for c, s, f, p in
-            zip(area, stride, layer.filter_size, pad))
+    return (input_layer, tuple(
+            slice(c.start * s - p, c.stop * s + f - 1 - p) for c, s, f, p in
+            zip(area, stride, layer.filter_size, pad)))
 
 def calc_pool_input_area(layer, area):
-    if area.length == 0:
-       return tuple(slice(0, m) for m in layer.get_output_shape()[2:])
+    input_layer = layer.input_layer
+    if len(area) == 0:
+       return (input_layer,
+               tuple(slice(0, m) for m in input_layer.output_shape[2:]))
     pad = conv_padding(layer.pad, layer.pool_size)
     stride = conv_stride(layer.stride, layer.pool_size)
-    area = tuple(
-            slice(c.start * s - p, c.stop * s + f - p) for c, s, f, p in
-            zip(area, stride, layer.pool_size, pad))
+    return (input_layer, tuple(
+            slice(c.start * s - p, c.stop * s + f - 1 - p) for c, s, f, p in
+            zip(area, stride, layer.pool_size, pad)))
 
 
 class PurposeMapper:
@@ -173,6 +179,9 @@ class PurposeMapper:
             self.prototypes.append(
                 (index, pro, responselocs[layer][arange, pro]))
 
+    def generate_prototype_images(self):
+        pass
+
 class Debugger:
     """
     For detailed debugging of the response of a network to a single image;
@@ -180,10 +189,12 @@ class Debugger:
     make a mistake on this particular image?
     """
     def __init__(self, network, image):
+        if len(image.shape) == 3:
+           image = image[np.newaxis,:]
         self.net = network
         self.img = image
         self.debug_fn = network.debug_fn()
-        activations = self.debug_fn(image[np.newaxis,:])
+        activations = self.debug_fn(image)
         self.acts = dict(zip(network.all_layers(), activations))
         # todo: consider also collecting response regions
 
