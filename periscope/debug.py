@@ -199,8 +199,8 @@ class PurposeMapper:
             self, directory=None, blockheight=1, blockwidth=None,
             groupsize=32, pretty=None):
         if pretty:
-            pretty.task('Computing purpose filmstrip images for {}'.format(
-                self.net.__class__.__name__))
+            pretty.task('Computing {}x{} filmstrip images for {}'.format(
+                blockheight, blockwidth or '', self.net.__class__.__name__))
         if directory is None:
             directory = os.path.join(
                 self.net.checkpoint.directory,
@@ -218,8 +218,7 @@ class PurposeMapper:
                     index,
                     unit=range(start, min(len(im), start + groupsize)),
                     blockheight=blockheight, blockwidth=blockwidth)
-                fname = "l{}_u{}-{}.jpg".format(
-                    index, start, stop - 1)
+                fname = "l{}_u{}.jpg".format(index, start)
                 # Use lossy jpg for 10x image size savings, but
                 # save small images at full quality, to avoid loss of
                 # detailed color information for small convolutions.

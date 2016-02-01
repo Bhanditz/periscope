@@ -43,6 +43,7 @@ corpus = Corpus(args.corpus)
 # After the training, generate purpose database and images.
 mapper = PurposeMapper(net, corpus)
 if mapper.exists():
+    pretty.task("Loading existing purpose database.")
     mapper.load()
 else:
     mapper.compute(pretty=pretty)
@@ -52,3 +53,6 @@ mapper.save_filmstrip_images(pretty=pretty)
 
 # Also do f3 for UI
 mapper.save_filmstrip_images(pretty=pretty, blockheight=3, blockwidth=3)
+
+# Also do f7 for UI
+mapper.save_filmstrip_images(pretty=pretty, blockheight=7, blockwidth=7)
