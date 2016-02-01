@@ -1,5 +1,6 @@
-# ww4sn idea: 
+# ww4rn idea: 
 # QuickNorm after every convolution AND every max pool.
+# AND a relu after every max pool
 
 from periscope import Network
 from periscope.layers import QuickNormLayer
@@ -8,7 +9,7 @@ from lasagne.layers import Conv2DLayer, MaxPool2DLayer, DropoutLayer
 from lasagne.layers import NonlinearityLayer
 from lasagne.layers.normalization import batch_norm
 from lasagne.init import HeUniform
-from lasagne.nonlinearities import identity
+from lasagne.nonlinearities import identity, rectify
 import numpy as np
 
 def quick_norm(layer):
@@ -21,7 +22,7 @@ def quick_norm(layer):
         it will be irreversibly modified as specified above
     @return: A `BatchNormLayer` instance stacked on the given `layer`
     """
-    nonlinearity = getattr(layer, 'nonlinearity', None)
+    nonlinearity = getattr(layer, 'nonlinearity', rectify) # default to rectify
     if nonlinearity is not None:
         layer.nonlinearity = lasagne.nonlinearities.identity
     if hasattr(layer, 'b'):
@@ -30,13 +31,13 @@ def quick_norm(layer):
     network = QuickNormLayer(layer)
     return NonlinearityLayer(network, nonlinearity)
 
-class Ww4sn(Network):
+class Ww4rn(Network):
     """
     The idea: add QuickNorm after max pooling to recenter responses.
     """
 
     def init_constants(self):
-        super(Ww4sn, self).init_constants()
+        super(Ww4rn, self).init_constants()
         self.crop_size = (96, 96)
         self.batch_size = 64
         self.learning_rates = np.concatenate((

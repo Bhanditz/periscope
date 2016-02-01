@@ -1,3 +1,7 @@
+# ww4qn idea:
+# QuickNorm after every convolution instead of full BatchNorm.
+# in particular, this means, no more biases, and also no output scaling.
+
 from periscope import Network
 from periscope.layers import QuickNormLayer
 import lasagne
