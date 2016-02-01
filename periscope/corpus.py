@@ -220,7 +220,7 @@ class CorpusCreator:
         self.write_label_names()
         self.process_images('train', width, height, seed=seed, pretty=pretty)
         self.process_images('val', width, height, seed=(seed + 1000),
-            pretty=pretty)
+            link=True, pretty=pretty)
 
     def load_devkit_file(self, filename):
         """
@@ -233,53 +233,62 @@ class CorpusCreator:
             return [(n, int(i)) for n, i in strings]
 
     def write_seed_file(self, seed):
-       with open(os.path.join(self.target, "seed.txt"), 'w') as f:
-           f.write('{}\n'.format(seed))
+        with open(os.path.join(self.target, "seed.txt"), 'w') as f:
+            f.write('{}\n'.format(seed))
 
     def write_dimensions(self, w, h):
-       with open(os.path.join(self.target, "dimensions.txt"), 'w') as f:
-           f.write('{} {}\n'.format(h, w))
+        with open(os.path.join(self.target, "dimensions.txt"), 'w') as f:
+            f.write('{} {}\n'.format(h, w))
 
     def write_label_names(self):
-       labelnames = self.load_devkit_file('categories.txt')
-       labelarray = [None] * len(labelnames)
-       for n, i in labelnames:
-           labelarray[i] = n
-       with open(os.path.join(self.target, "labelnames.txt"), 'w') as f:
-           for i in range(len(labelarray)):
-               f.write('{} {}\n'.format(labelarray[i], i))
+        labelnames = self.load_devkit_file('categories.txt')
+        labelarray = [None] * len(labelnames)
+        for n, i in labelnames:
+            labelarray[i] = n
+        with open(os.path.join(self.target, "labelnames.txt"), 'w') as f:
+            for i in range(len(labelarray)):
+                f.write('{} {}\n'.format(labelarray[i], i))
 
     def write_image_names(self, imagenames, filename):
-       with open(os.path.join(self.target, filename), 'w') as f:
-           for i, (name, label) in enumerate(imagenames):
-               f.write('{} {} {}\n'.format(name, label, i))
+        with open(os.path.join(self.target, filename), 'w') as f:
+            for i, (name, label) in enumerate(imagenames):
+                f.write('{} {} {}\n'.format(name, label, i))
 
     def load_image(self, filename, width, height):
-       with Image.open(os.path.join(self.data, filename)) as im:
-           if (width, height) != im.size:
-              im = ImageOps.fit(im, (width, height), Image.ANTIALIAS)
-           npa = (np.array(im.convert('RGB')) - 128).astype(np.int8)
-           return npa.transpose((2, 0, 1))
-           
-    def process_images(self, prefix, width, height, seed=None, pretty=None):
-       if pretty:
-           pretty.subtask('Processing {} images'.format(prefix))
-       imagenames = self.load_devkit_file('{}.txt'.format(prefix))
-       np.random.RandomState(seed=seed).shuffle(imagenames)
-       self.write_image_names(imagenames, '{}.names.txt'.format(prefix))
-       la = np.memmap(
-           os.path.join(self.target, '{}.labels.db'.format(prefix)),
-           shape=len(imagenames), dtype=np.int32, mode='w+')
-       ia = np.memmap(
-           os.path.join(self.target, '{}.images.db'.format(prefix)),
-           shape=(len(imagenames), 3, height, width), dtype=np.int8, mode='w+')
-       if pretty:
-           p = pretty.progress(len(imagenames))
-       for i, (name, label) in enumerate(imagenames):
-           if pretty:
-               p.update(i)
-           la[i] = label
-           ia[i,:,:,:] = self.load_image(name, width, height)
-       if pretty:
-           p.finish()
+        with Image.open(os.path.join(self.data, filename)) as im:
+            if (width, height) != im.size:
+               im = ImageOps.fit(im, (width, height), Image.ANTIALIAS)
+            npa = (np.array(im.convert('RGB')) - 128).astype(np.int8)
+            return npa.transpose((2, 0, 1))
 
+    def link_image(self, filename, kind, index):
+        source = os.path.abspath(os.path.join(self.data, filename))
+        target = os.path.join(self.target, 'link', kind, 'i%d.jpg' % index)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.symlink(source, target)
+
+    def process_images(self, prefix, width, height,
+             seed=None, pretty=None, link=False):
+        if pretty:
+            pretty.subtask('Processing {} images'.format(prefix))
+        imagenames = self.load_devkit_file('{}.txt'.format(prefix))
+        np.random.RandomState(seed=seed).shuffle(imagenames)
+        self.write_image_names(imagenames, '{}.names.txt'.format(prefix))
+        la = np.memmap(
+            os.path.join(self.target, '{}.labels.db'.format(prefix)),
+            shape=len(imagenames), dtype=np.int32, mode='w+')
+        ia = np.memmap(
+            os.path.join(self.target, '{}.images.db'.format(prefix)),
+            shape=(len(imagenames), 3, height, width), dtype=np.int8, mode='w+')
+        if pretty:
+            p = pretty.progress(len(imagenames))
+        for i, (name, label) in enumerate(imagenames):
+            if pretty:
+                p.update(i)
+            la[i] = label
+            ia[i,:,:,:] = self.load_image(name, width, height)
+            if link:
+                self.link_image(name, prefix, i)
+        if pretty:
+            p.finish()
+ 
