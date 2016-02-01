@@ -2,7 +2,10 @@ from periscope import Network
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, ConcatLayer
 from lasagne.layers import DenseLayer, InputLayer, Pool2DLayer
+from PIL import Image
 import numpy as np
+import pickle
+import os
 
 def is_simple_layer(layer): 
     return not (isinstance(layer, Conv2DLayer) or
@@ -77,7 +80,7 @@ def calc_conv_input_area(layer, area):
     pad = conv_padding(layer.pad, layer.filter_size)
     stride = conv_stride(layer.stride, layer.filter_size)
     return (input_layer, tuple(
-            slice(c.start * s - p, c.stop * s + f - 1 - p) for c, s, f, p in
+            slice(c.start * s - p, (c.stop - 1) * s + f - p) for c, s, f, p in
             zip(area, stride, layer.filter_size, pad)))
 
 def calc_pool_input_area(layer, area):
@@ -88,17 +91,56 @@ def calc_pool_input_area(layer, area):
     pad = conv_padding(layer.pad, layer.pool_size)
     stride = conv_stride(layer.stride, layer.pool_size)
     return (input_layer, tuple(
-            slice(c.start * s - p, c.stop * s + f - 1 - p) for c, s, f, p in
+            slice(c.start * s - p, (c.stop - 1) * s + f - p) for c, s, f, p in
             zip(area, stride, layer.pool_size, pad)))
 
+def padslice(arr, sect, fill=0):
+    """
+    Given a tuple of slices sect which may have out-of-bound ranges,
+    returns an array of exactly the shape requested, with any data
+    beyond the boundaries padded with a fill value, defaulting to zero.
+    """
+    size = arr.shape
+    if (np.shape(fill) == arr.shape[0]):
+        fill = fill[(slice(None),) + (None,) * (len(arr.shape) - 1)]
+    src = tuple(slice(max(0, s.start), min(m, s.stop))
+        for m, s in zip(size, sect))
+    tar = tuple(slice(r.start - s.start, r.stop - s.start)
+        for r, s in zip(src, sect))
+    result = np.ones(tuple(s.stop - s.start for s in sect)) * fill
+    result[tar] = arr[src]
+    return result
+
+def safe_unravel(index, shape):
+    """
+    Just like unravel index, but happy to return a degenerate zero-length
+    location for a zero-dimensional shape.
+    """
+    if len(shape) == 0:
+        return ()
+    return np.unravel_index(index, shape)
 
 class PurposeMapper:
     """
     Has the logic needed to create response visualizations for each unit
     of a network with respect to the images of a testing corpus, to answer
     the question "What for?"
-    Can create a response database, which contains an array of the following:
-    for each nontrivial
+
+    Can create, save, load, or visualize a top response database, which
+    contains an array of the following:
+
+       [(layer_index, prototype_indexes, prototype_locations)]
+
+    layer_index - which layer, as in network.all_layers()[layer_index]
+    prototype_indexes - numpy array(channels, N), to give the top N
+        examples of each channel activation.  i = prototype_index[c, x]
+        selects the xth example of a top activation for channel c, so
+        that corpus.get(i) returns the example image.
+    prototype_locations - numpy array(channels, N), to give the N
+        locations corresponding to the prototype images above. These
+        are flattened locations within the specific activation layer, so
+        to get the original activation x, y, so for spatial layers we can
+        recover location: xy = np.unravel_index(i, layer.output_shape[2:])
     """
     def __init__(self, network, corpus, kind, n=50):
         self.net = network
@@ -114,6 +156,92 @@ class PurposeMapper:
                 continue
             if not is_simple_layer(layer):
                 self.collect.append((index, self.out_layer[layer]))
+        self.prototypes = None
+
+    def save(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'purpose.db')
+        with open(filename, 'wb+') as f:
+            f.seek(0)
+            f.truncate()
+            formatver = 1
+            pickle.dump(formatver, f)
+            pickle.dump(self.prototypes, f)
+
+    def load(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'purpose.db')
+        with open(filename, 'rb') as f:
+            f.seek(0)
+            formatver = 1
+            formatver = pickle.load(f)
+            self.prototypes = pickle.load(f)
+
+    def extract_image_section(self,
+            layer_index, prototype_index, prototype_loc,
+            fill=0):
+        layer = self.net.all_layers()[layer_index]
+        img, label, name = self.corpus.get(
+                self.kind, prototype_index, shape=self.net.crop_size)
+        coord_loc = safe_unravel(prototype_loc, layer.output_shape[2:])
+        sect = receptive_field(layer, tuple(slice(i, i+1) for i in coord_loc))
+        return padslice(img, ((slice(0, img.shape[0]), ) + sect), fill=fill)
+
+    def make_filmstrip(self,
+            layer, unit=None, blockwidth=None, blockheight=1,
+            background='white', margin=1, fill=0):
+        # Grab the prototypes array for the requested layer.
+        all_layers = self.net.all_layers()
+        if isinstance(layer, int):
+            prot = [p for p in self.prototypes if p[0] == layer][0]
+        elif isinstance(layer, tuple):
+            prot = layer
+        else:
+            prot = [p for p in self.prototypes if all_layers[p[0]] == layer][0]
+        layer_index, prototype_images, prototype_locations = prot
+        layer = all_layers[layer_index]
+        shape = layer.output_shape
+        if unit is None:
+            unit = range(shape[0])
+        if isinstance(unit, int):
+            unit = [unit]
+        if blockwidth is None:
+            blockwidth = self.n // blockheight
+        # Compute a single example receptive field
+        sect = receptive_field(
+            layer, tuple(slice(0, 1) for i in shape[2:]))
+        ri_shape = tuple(s.stop - s.start for s in sect)
+        im_shape = self.net.crop_size
+        if all(r >= i for r, i in zip(ri_shape, im_shape)):
+            ri_shape = im_shape
+        unitcount = len(unit)
+        im = Image.new('RGB',
+            ((ri_shape[1] + margin) * blockwidth - margin,
+             (ri_shape[0] + margin) * blockheight * unitcount - margin),
+            background)
+        # Loop throught every selected unit, and paste a block of
+        # top response areas from top response images.
+        for i, u in enumerate(unit):
+            index = 0
+            for r in range(blockheight):
+                for c in range(blockwidth):
+                    pro_im = prototype_images[u, index]
+                    pro_loc = prototype_locations[u, index]
+                    if ri_shape == im_shape:
+                        imarr, label, name = self.corpus.get(self.kind, pro_im)
+                    else:
+                        imarr = self.extract_image_section(
+                                layer_index, pro_im, pro_loc, fill=fill)
+                    data = (imarr + 128).astype(
+                            np.uint8).transpose((1, 2, 0)).tostring()
+                    one_image = Image.frombytes('RGB',
+                            (imarr.shape[2], imarr.shape[1]), data)
+                    im.paste(one_image, (c * (ri_shape[1] + margin),
+                            r + (i * blockheight)* (ri_shape[0] + margin)))
+                    index += 1
+        return im
 
     def compute_out_layers(self):
         """

@@ -15,17 +15,45 @@ class ZeroPreluLayer(lasagne.layers.Layer):
         return (input - 0.2) * 1.25
 
 
-# ***********
-# ***********
-# xx       xx
-# xx       xx
-# xx  ooo  xx
-# xx  ooo  xx
-# xx  ooo  xx
-# xx       xx
-# xx       xx
-# ***********
-# ***********
+class GradientLayer(lasagne.layers.Layer):
+    def __init__(self, incoming, kinds='vc', **kwargs):
+        super(GradientLayer, self).__init__(incoming, **kwargs)
+        dims = self.input_layer.output_shape[2:]
+        cy = dims[0] - 1 / 2.0
+        cx = dims[1] - 1 / 2.0
+        # Bottom-to-top gradient
+        vertical = (
+            np.linspace(1, -1, dims[0], dtype=np.float32)[:,np.newaxis])
+        # Left-to-right gradient
+        horizontal = (
+            np.linspace(-1, 1, dims[1], dtype=np.float32)[np.newaxis,:])
+        # Closeness to center
+        center = 1 - (
+            (vertical) ** 2 + (horizontal) ** 2) ** 0.5
+        included = []
+        for code, signal in zip('vhc', [vertical, horizontal, center]):
+            if code in kinds:
+                included.append(signal)
+        # Verify all kinds are recognized
+        assert len(kinds) == len(included), 'Unrecognized kind in %s' % kinds
+        self.kinds = kinds
+        # Create the theano constant
+        gradient = np.zeros((1, len(kinds)) + dims, dtype=np.float32)
+        for i, signal in enumerate(included):
+            gradient[0, i, :, :] = signal
+        self.gradient = theano.tensor.constant(gradient)
+
+    def get_output_shape_for(self, input_shape):
+        shape = list(input_shape)
+        shape[1] += len(self.kinds)
+        return tuple(shape)
+
+    def get_output_for(self, input, **kwargs):
+        return theano.tensor.concatenate([
+            input,
+            theano.tensor.repeat(self.gradient, input.shape[0], axis=0)
+        ], axis=1)
+
 class LandmarkLayer(lasagne.layers.Layer):
     def __init__(self, incoming, **kwargs):
         super(LandmarkLayer, self).__init__(incoming, **kwargs)
