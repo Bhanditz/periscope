@@ -3,6 +3,7 @@
 import pretty
 import argparse
 from periscope import Corpus
+from periscope.debug import PurposeMapper
 from periscope import prepare_corpus, load_from_checkpoint, class_for_shortname
 
 parser = argparse.ArgumentParser()
@@ -38,3 +39,9 @@ corpus = Corpus(args.corpus)
 
 # Do the training
 net.train(corpus, pretty=pretty)
+
+# After the training, generate purpose database and images.
+mapper = PurposeMapper(net, corpus)
+mapper.compute(pretty=pretty)
+mapper.save()
+mapper.save_filmstrip_images(pretty=pretty)

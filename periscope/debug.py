@@ -1,7 +1,7 @@
 from periscope import Network
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, ConcatLayer
-from lasagne.layers import DenseLayer, InputLayer, Pool2DLayer
+from lasagne.layers import DenseLayer, InputLayer, Pool2DLayer, DropoutLayer
 from PIL import Image
 import numpy as np
 import pickle
@@ -142,7 +142,7 @@ class PurposeMapper:
         to get the original activation x, y, so for spatial layers we can
         recover location: xy = np.unravel_index(i, layer.output_shape[2:])
     """
-    def __init__(self, network, corpus, kind, n=50):
+    def __init__(self, network, corpus, kind='val', n=50):
         self.net = network
         self.network = network.network
         self.corpus = corpus
@@ -179,6 +179,12 @@ class PurposeMapper:
             formatver = pickle.load(f)
             self.prototypes = pickle.load(f)
 
+    def exists(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'purpose.db')
+        return os.path.isfile(filename)
+
     def extract_image_section(self,
             layer_index, prototype_index, prototype_loc,
             fill=0):
@@ -190,17 +196,27 @@ class PurposeMapper:
         return padslice(img, ((slice(0, img.shape[0]), ) + sect), fill=fill)
 
     def save_filmstrip_images(
-            self, directory=None, blockheight=1, groupsize=32):
+            self, directory=None, blockheight=1, groupsize=32, pretty=None):
+        if pretty:
+            pretty.task('Computing purpose filmstrip images for {}'.format(
+                self.net.__class__.__name__))
         if directory is None:
             directory = os.path.join(
                 self.net.checkpoint.directory,
                 'purpose', 'f{}'.format(blockheight))
         os.makedirs(directory, exist_ok=True)
+        if pretty:
+            total = -sum((-len(im) // groupsize
+                    for i, im, l in self.prototypes))
+            p = pretty.progress(total)
+            total = 0
         for index, im, loc in self.prototypes:
             for start in range(0, len(im), groupsize):
                 stop = min(len(im), start + groupsize)
                 pil_im = self.make_filmstrip(
-                    index, unit=range(start, min(len(im), start + groupsize)))
+                    index,
+                    unit=range(start, min(len(im), start + groupsize)),
+                    blockheight=blockheight)
                 fname = "l{}_u{}-{}.jpg".format(
                     index, start, stop - 1)
                 # Use lossy jpg for 10x image size savings, but
@@ -211,6 +227,11 @@ class PurposeMapper:
                 else:
                     opts = {}
                 pil_im.save(os.path.join(directory, fname), 'JPEG', **opts)
+                if pretty:
+                    total += 1
+                    p.update(total)
+        if pretty:
+            p.finish()
 
     def make_filmstrip(self,
             layer, unit=None, blockwidth=None, blockheight=1,
@@ -263,7 +284,7 @@ class PurposeMapper:
                     one_image = Image.frombytes('RGB',
                             (imarr.shape[2], imarr.shape[1]), data)
                     im.paste(one_image, (c * (ri_shape[1] + margin),
-                            r + (i * blockheight)* (ri_shape[0] + margin)))
+                            (r + (i * blockheight)) * (ri_shape[0] + margin)))
                     index += 1
         return im
 
@@ -284,7 +305,10 @@ class PurposeMapper:
                 out_layer[layer.input_layer] = child
         return out_layer
 
-    def compute_prototypes(self, pretty=None):
+    def compute(self, pretty=None):
+        if pretty:
+            pretty.task('Computing purpose database for {}'.format(
+                self.net.__class__.__name__))
         layers = [layer for i, layer in self.collect]
         responses = {}
         responselocs = {}
@@ -299,9 +323,13 @@ class PurposeMapper:
             responses[layer] = np.zeros((sh[1], input_set.count()))
             responselocs[layer] = np.zeros(
                 (sh[1], input_set.count()), dtype=np.int32)
+        if pretty:
+            pretty.subtask('Compiling debug function.')
         debug_fn = self.net.debug_fn(layers)
         # Now do the loop
         # TODO: add pretty progress output
+        if pretty:
+            pretty.subtask('Compiling debug function.')
         if pretty:
             p = pretty.progress(len(input_set))
         s = 0
@@ -363,9 +391,10 @@ class Debugger:
         parts = self.follow_nontrivial_inputs(layer, coord, num)
         results = []
         for layer, coord, amount in parts:
-            while is_simple_layer(layer):
+            while is_trivial_layer(layer):
                 layer, coord = self.follow_trivial_inputs(layer, coord)
             results.append((layer, coord, amount))
+        return results
 
     def follow_trivial_inputs(self, layer, coord):
         if is_simple_layer(layer):
@@ -448,9 +477,9 @@ class Debugger:
         input_layer = layer.input_layer
         ia = self.acts[input_layer]
         weights = layer.W.get_value()
-        contribs = ia.flatten() * weights
-        top = contribs.argsort()[:num]
-        coords = zip(np.unravel_index(top, ia.shape))
+        contribs = np.dot(ia.flatten(), weights)
+        top = (-contribs).argsort()[:num]
+        coords = zip(*np.unravel_index(top, ia.shape))
         return [(input_layer, c, contribs[t]) for c, t in zip(coords, top)]
 
     def major_conv_inputs(self, layer, coord, num=10):
