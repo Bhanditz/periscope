@@ -196,7 +196,8 @@ class PurposeMapper:
         return padslice(img, ((slice(0, img.shape[0]), ) + sect), fill=fill)
 
     def save_filmstrip_images(
-            self, directory=None, blockheight=1, groupsize=32, pretty=None):
+            self, directory=None, blockheight=1, blockwidth=None,
+            groupsize=32, pretty=None):
         if pretty:
             pretty.task('Computing purpose filmstrip images for {}'.format(
                 self.net.__class__.__name__))
@@ -216,7 +217,7 @@ class PurposeMapper:
                 pil_im = self.make_filmstrip(
                     index,
                     unit=range(start, min(len(im), start + groupsize)),
-                    blockheight=blockheight)
+                    blockheight=blockheight, blockwidth=blockwidth)
                 fname = "l{}_u{}-{}.jpg".format(
                     index, start, stop - 1)
                 # Use lossy jpg for 10x image size savings, but

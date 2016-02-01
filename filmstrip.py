@@ -47,4 +47,8 @@ if mapper.exists():
 else:
     mapper.compute(pretty=pretty)
 mapper.save()
+# Save f1 default
 mapper.save_filmstrip_images(pretty=pretty)
+
+# Also do f3 for UI
+mapper.save_filmstrip_images(pretty=pretty, blockheight=3, blockwidth=3)
