@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 import os
 
-def is_simple_layer(layer): 
+def is_simple_layer(layer):
     return not (isinstance(layer, Conv2DLayer) or
         isinstance(layer, DenseLayer) or
         isinstance(layer, InputLayer))
@@ -18,7 +18,7 @@ def is_trivial_layer(layer):
         return False
     return (hasattr(layer, 'input_layer') and
             layer.input_shape == layer.output_shape)
-    
+
 def conv_padding(pad, filter_size):
     if pad == 'full':
         return tuple(s - 1 for s in filter_size)
@@ -66,7 +66,7 @@ def layer_input_area(layer, area):
         return tuple((inp, area) for inp in layer.input_layers)
     # Other operations do not alter the spatial field.
     return ((layer.input_layer, area), )
-    
+
 def max_input_area(area1, area2):
     return tuple(
         slice(min(a1.start, a2.start), max(a1.stop, a2.stop))
@@ -189,6 +189,29 @@ class PurposeMapper:
         sect = receptive_field(layer, tuple(slice(i, i+1) for i in coord_loc))
         return padslice(img, ((slice(0, img.shape[0]), ) + sect), fill=fill)
 
+    def save_filmstrip_images(
+            self, directory=None, blockheight=1, groupsize=32):
+        if directory is None:
+            directory = os.path.join(
+                self.net.checkpoint.directory,
+                'purpose', 'f{}'.format(blockheight))
+        os.makedirs(directory, exist_ok=True)
+        for index, im, loc in self.prototypes:
+            for start in range(0, len(im), groupsize):
+                stop = min(len(im), start + groupsize)
+                pil_im = self.make_filmstrip(
+                    index, unit=range(start, min(len(im), start + groupsize)))
+                fname = "l{}_u{}-{}.jpg".format(
+                    index, start, stop - 1)
+                # Use lossy jpg for 10x image size savings, but
+                # save small images at full quality, to avoid loss of
+                # detailed color information for small convolutions.
+                if pil_im.size[0] * pil_im.size[1] < 640 ** 2:
+                    opts = { 'subsampling': 0, 'quality': 99 }
+                else:
+                    opts = {}
+                pil_im.save(os.path.join(directory, fname), 'JPEG', **opts)
+
     def make_filmstrip(self,
             layer, unit=None, blockwidth=None, blockheight=1,
             background='white', margin=1, fill=0):
@@ -230,7 +253,8 @@ class PurposeMapper:
                     pro_im = prototype_images[u, index]
                     pro_loc = prototype_locations[u, index]
                     if ri_shape == im_shape:
-                        imarr, label, name = self.corpus.get(self.kind, pro_im)
+                        imarr, label, name = self.corpus.get(
+                            self.kind, pro_im, shape=im_shape)
                     else:
                         imarr = self.extract_image_section(
                                 layer_index, pro_im, pro_loc, fill=fill)
