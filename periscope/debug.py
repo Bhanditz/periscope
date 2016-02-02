@@ -1,4 +1,5 @@
 from periscope import Network
+from periscope import load_from_checkpoint
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, ConcatLayer
 from lasagne.layers import DenseLayer, InputLayer, Pool2DLayer, DropoutLayer
@@ -329,8 +330,6 @@ class PurposeMapper:
         # Now do the loop
         # TODO: add pretty progress output
         if pretty:
-            pretty.subtask('Compiling debug function.')
-        if pretty:
             p = pretty.progress(len(input_set))
         s = 0
         for i, (inp, lab, name) in enumerate(input_set):
@@ -372,6 +371,9 @@ class Debugger:
         if len(image.shape) == 3:
            image = image[np.newaxis,:]
         self.net = network
+        self.layers = network.all_layers()
+        self.index_from_layer = dict(
+            (layer, i) for i, layer in enumerate(self.layers))
         self.img = image
         self.debug_fn = network.debug_fn()
         activations = self.debug_fn(image)
@@ -386,6 +388,12 @@ class Debugger:
             if c < 0 or c >= s:
                 return False
         return True
+
+    def layer_index(self, layer):
+        return self.index_from_layer[layer]
+
+    def layer(self, index):
+        return self.layers[index]
 
     def major_nontrivial_inputs(self, layer, coord, num=10):
         parts = self.follow_nontrivial_inputs(layer, coord, num)
@@ -519,3 +527,19 @@ class Debugger:
                 for c, s, p in zip(coord[1:], stride, pad))
         return (input_layer, (0,) + offset, seen_input * weights)
 
+class DebuggerCache:
+    def __init__(self, corpus):
+        self.corpus = corpus
+        self.model_cache = {}
+        self.debugger_cache = {}
+    def lookup(self, modelname, imgnum):
+        if (modelname, imgnum) in self.debugger_cache:
+            return self.debugger_cache[(modelname, imgnum)]
+        if modelname not in self.model_cache:
+             self.model_cache[modelname] = (
+                 load_from_checkpoint(modelname))
+        net = self.model_cache[modelname]
+        img = corpus.get('val', img, shape=net.crop_size)
+        dbg = Debugger(net, img)
+        self.debugger_cache[(modelname, imgnum)] = dbg
+        return dbg
