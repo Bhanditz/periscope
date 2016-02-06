@@ -72,7 +72,7 @@ class Srel(Network):
         network = apply_prelu_bn_sren(network)
 
         # Add landmarks!
-        network = LandmarkLayer(network)
+        network = LandmarkLayer(network, "TBRLM")
 
         # 5th. Data size 11 -> 5
         # 5*5*256 = 6400, rf:49x49

@@ -1,6 +1,6 @@
 from periscope import Network
 from periscope.layers import ZeroGrayLayer, QuickNormLayer, ZeroPreluLayer
-from periscope.layers import GradientLayer
+from periscope.layers import LandmarkLayer
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, ConcatLayer
 from lasagne.layers import ParametricRectifierLayer
@@ -72,7 +72,7 @@ class Srev(Network):
         network = apply_prelu_bn_sren(network)
 
         # Add landmarks!
-        network = GradientLayer(network, kinds='v')
+        network = LandmarkLayer(network, kinds='v')
 
         # 5th. Data size 11 -> 5
         # 5*5*256 = 6400, rf:49x49

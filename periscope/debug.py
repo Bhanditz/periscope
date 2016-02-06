@@ -65,6 +65,9 @@ def layer_input_area(layer, area):
     # Concatenations depend on more than one input layer.
     if hasattr(layer, 'input_layers'):
         return tuple((inp, area) for inp in layer.input_layers)
+    # Padding shifts the visual field
+    if hasattr(layer, 'pad'):
+        return (calc_pad_input_area(layer, area), )
     # Other operations do not alter the spatial field.
     return ((layer.input_layer, area), )
 
@@ -72,6 +75,16 @@ def max_input_area(area1, area2):
     return tuple(
         slice(min(a1.start, a2.start), max(a1.stop, a2.stop))
         for a1, a2 in zip(area1, area2))
+
+def calc_pad_input_area(layer, area):
+    input_layer = layer.input_layer
+    if len(area) == 0:
+       return (input_layer,
+               tuple(slice(0, m) for m in input_layer.output_shape[2:]))
+    pad = layer.pad
+    return (input_layer, tuple(
+            slice(c.start - p, c.stop - p) for c, p in
+            zip(area, pad)))
 
 def calc_conv_input_area(layer, area):
     input_layer = layer.input_layer

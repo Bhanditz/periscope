@@ -228,8 +228,9 @@ class Network:
         # Build training function
         if pretty:
             import lasagne
-            pretty.subtask("Compiling training function: %d params." %
-                lasagne.layers.count_params(self.network))
+            pretty.subtask("Training function for %s: %d params." %
+                (self.__class__.__name__,
+                lasagne.layers.count_params(self.network)))
         train_fn = self.train_fn()
         if pretty:
             eval_fn = self.eval_fn()

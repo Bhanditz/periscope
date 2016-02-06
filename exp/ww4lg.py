@@ -1,5 +1,5 @@
 from periscope import Network
-from periscope.layers import GradientLayer
+from periscope.layers import LandmarkLayer
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, DropoutLayer
 from lasagne.layers.normalization import batch_norm
@@ -37,7 +37,7 @@ class Ww4lg(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        network = LandmarkLayer(network)
 
         # 3rd. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
@@ -53,7 +53,7 @@ class Ww4lg(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        network = LandmarkLayer(network)
 
         # 5th. Data size 24->24
         network = Conv2DLayer(network, 256, (3, 3), pad='same',
@@ -69,7 +69,7 @@ class Ww4lg(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        network = LandmarkLayer(network)
 
         # 7th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',

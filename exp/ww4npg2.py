@@ -7,13 +7,13 @@ from lasagne.init import HeUniform
 from lasagne.nonlinearities import identity
 import numpy as np
 
-# Based onw ww4bn2, the ww4lg network adds a location gradient to the
-# higher-level layers.
-class Ww4lg2(Network):
+# Just like the landmarks in ww4npg, but minus the top two layers
+
+class Ww4npg2(Network):
 
     def init_constants(self):
-        super(Ww4lg2, self).init_constants()
-        self.crop_size = (96, 96)
+        super(Ww4npg2, self).init_constants()
+        self.crop_size = (108, 108)
         self.batch_size = 64
         self.learning_rates = np.concatenate((
             [0.005] * 10,
@@ -23,24 +23,33 @@ class Ww4lg2(Network):
         ))
 
     def hidden_layers(self, network, **kwargs):
-        # 1st. Data size 96->96
-        network = Conv2DLayer(network, 64, (3, 3), pad='same',
-            W=HeUniform('relu'))
-        network = batch_norm(network, gamma=None)
-        # 2nd. Data size 96->96
-        network = Conv2DLayer(network, 64, (3, 3), pad='same',
+        # EXPERIMENT
+        # Add landmarks!
+        network = LandmarkLayer(network)
+
+        # 1st. Data size 108->106
+        network = Conv2DLayer(network, 64, (3, 3), pad=0,
             W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
-        # Max pool. Data size 96->48
+        # EXPERIMENT
+        # Add landmarks!
+        network = LandmarkLayer(network)
+
+        # 2nd. Data size 106->104
+        network = Conv2DLayer(network, 64, (3, 3), pad=0,
+            W=HeUniform('relu'))
+        network = batch_norm(network, gamma=None)
+
+        # Max pool. Data size 104->52
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
         # EXPERIMENT
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 3rd. Data size 48->48
-        network = Conv2DLayer(network, 128, (3, 3), pad='same',
+        # 3rd. Data size 52->50
+        network = Conv2DLayer(network, 128, (3, 3), pad=0,
             W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
@@ -48,8 +57,8 @@ class Ww4lg2(Network):
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 4th. Data size 48->48
-        network = Conv2DLayer(network, 128, (3, 3), pad='same',
+        # 4th. Data size 50->48
+        network = Conv2DLayer(network, 128, (3, 3), pad=0,
             W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
@@ -60,8 +69,8 @@ class Ww4lg2(Network):
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 5th. Data size 24->24
-        network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        # 5th. Data size 24->22
+        network = Conv2DLayer(network, 256, (3, 3), pad=0,
             W=HeUniform('relu'), name='conv5')
         network = batch_norm(network, gamma=None)
 
@@ -69,20 +78,20 @@ class Ww4lg2(Network):
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 6th. Data size 24->24
-        network = Conv2DLayer(network, 256, (3, 3), pad='same',
+        # 6th. Data size 22->20
+        network = Conv2DLayer(network, 256, (3, 3), pad=0,
             W=HeUniform('relu'), name='conv6')
         network = batch_norm(network, gamma=None)
 
-        # Max pool.  Data size 24->12
+        # Max pool.  Data size 20->10
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
         # EXPERIMENT
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 7th. Data size 12->12
-        network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        # 7th. Data size 10->8
+        network = Conv2DLayer(network, 512, (3, 3), pad=0,
             W=HeUniform('relu'), name='conv7')
         network = batch_norm(network, gamma=None)
 
@@ -90,16 +99,18 @@ class Ww4lg2(Network):
         # Add landmarks!
         network = LandmarkLayer(network)
 
-        # 8th. Data size 12->12
-        network = Conv2DLayer(network, 512, (3, 3), pad='same',
+        # 8th. Data size 8->6
+        network = Conv2DLayer(network, 512, (3, 3), pad=0,
             W=HeUniform('relu'), name='conv8')
         network = batch_norm(network, gamma=None)
 
-        # Max pool.  Data size 12->6
+        # Max pool.  Data size 6->3
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
-        # 9th. Data size 6->1
-        network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
+        # 9th. Data size 3->1
+        network = Conv2DLayer(network, 1024, (3, 3), pad=0,
+            W=HeUniform('relu'), name='fc9')
+        # network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
         network = DropoutLayer(network)

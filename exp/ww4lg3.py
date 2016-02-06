@@ -1,5 +1,5 @@
 from periscope import Network
-from periscope.layers import GradientLayer
+from periscope.layers import LandmarkLayer
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, DropoutLayer
 from lasagne.layers.normalization import batch_norm
@@ -7,8 +7,10 @@ from lasagne.init import HeUniform
 from lasagne.nonlinearities import identity
 import numpy as np
 
-# Based onw ww4bn2, the ww4lg network adds a location gradient to the
+# Based onw ww4bn2, the ww4lg3 network adds a location gradient to the
 # higher-level layers.
+# - Only two location gradients
+# - Only after maxpool1+2
 class Ww4lg3(Network):
 
     def init_constants(self):
@@ -23,19 +25,10 @@ class Ww4lg3(Network):
         ))
 
     def hidden_layers(self, network, **kwargs):
-        # EXPERIMENT
-        # Add landmarks!
-        network = GradientLayer(network)
-
         # 1st. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
             W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
-
-        # EXPERIMENT
-        # Add landmarks!
-        network = GradientLayer(network)
-
         # 2nd. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
             W=HeUniform('relu'))
@@ -46,17 +39,12 @@ class Ww4lg3(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        network = LandmarkLayer(network)
 
         # 3rd. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
             W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
-
-        # EXPERIMENT
-        # Add landmarks!
-        network = GradientLayer(network)
-
         # 4th. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
             W=HeUniform('relu'))
@@ -67,17 +55,12 @@ class Ww4lg3(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        network = LandmarkLayer(network)
 
         # 5th. Data size 24->24
         network = Conv2DLayer(network, 256, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv5')
         network = batch_norm(network, gamma=None)
-
-        # EXPERIMENT
-        # Add landmarks!
-        network = GradientLayer(network)
-
         # 6th. Data size 24->24
         network = Conv2DLayer(network, 256, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv6')
@@ -88,16 +71,12 @@ class Ww4lg3(Network):
 
         # EXPERIMENT
         # Add landmarks!
-        network = GradientLayer(network)
+        # NO network = LandmarkLayer(network)
 
         # 7th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv7')
         network = batch_norm(network, gamma=None)
-
-        # EXPERIMENT
-        # Add landmarks!
-        network = GradientLayer(network)
 
         # 8th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
