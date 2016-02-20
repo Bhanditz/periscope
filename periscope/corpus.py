@@ -218,9 +218,9 @@ class CorpusCreator:
            self.write_seed_file(seed)
         self.write_dimensions(width, height)
         self.write_label_names()
-        self.process_images('train', width, height, seed=seed, pretty=pretty)
+        # self.process_images('train', width, height, seed=seed, pretty=pretty)
         self.process_images('val', width, height, seed=(seed + 1000),
-            link=True, pretty=pretty)
+            link=True, strip=100, pretty=pretty)
 
     def load_devkit_file(self, filename):
         """
@@ -254,21 +254,29 @@ class CorpusCreator:
             for i, (name, label) in enumerate(imagenames):
                 f.write('{} {} {}\n'.format(name, label, i))
 
-    def load_image(self, filename, width, height):
-        with Image.open(os.path.join(self.data, filename)) as im:
-            if (width, height) != im.size:
-               im = ImageOps.fit(im, (width, height), Image.ANTIALIAS)
-            npa = (np.array(im.convert('RGB')) - 128).astype(np.int8)
-            return npa.transpose((2, 0, 1))
+    def load_pil_image(self, filename, width, height):
+        im = Image.open(os.path.join(self.data, filename))
+        im.load()
+        if (width, height) != im.size:
+            im = ImageOps.fit(im, (width, height), Image.ANTIALIAS)
+        return im
+
+    def numpy_image(self, im):
+        npa = (np.array(im.convert('RGB')) - 128).astype(np.int8)
+        return npa.transpose((2, 0, 1))
 
     def link_image(self, filename, kind, index):
         source = os.path.abspath(os.path.join(self.data, filename))
         target = os.path.join(self.target, 'link', kind, 'i%d.jpg' % index)
         os.makedirs(os.path.dirname(target), exist_ok=True)
+        try:
+            os.remove(target)
+        except OSError:
+            pass
         os.symlink(source, target)
 
     def process_images(self, prefix, width, height,
-             seed=None, pretty=None, link=False):
+             seed=None, pretty=None, link=False, strip=0):
         if pretty:
             pretty.subtask('Processing {} images'.format(prefix))
         imagenames = self.load_devkit_file('{}.txt'.format(prefix))
@@ -280,15 +288,26 @@ class CorpusCreator:
         ia = np.memmap(
             os.path.join(self.target, '{}.images.db'.format(prefix)),
             shape=(len(imagenames), 3, height, width), dtype=np.int8, mode='w+')
+        if strip:
+            si = Image.new('RGB',
+                    (width * strip, -(-height // strip) * len(imagenames)))
         if pretty:
             p = pretty.progress(len(imagenames))
         for i, (name, label) in enumerate(imagenames):
             if pretty:
                 p.update(i)
             la[i] = label
-            ia[i,:,:,:] = self.load_image(name, width, height)
+            im = self.load_pil_image(name, width, height)
+            ia[i,:,:,:] = self.numpy_image(im)
+            if strip:
+                si.paste(im, ((i % strip) * width, (i // strip) * height))
             if link:
                 self.link_image(name, prefix, i)
+        if strip:
+            si.save(
+                os.path.join(self.target, '{}.strip.jpg'.format(prefix)),
+                "JPEG",
+                subsampling=0,
+                quality=95)
         if pretty:
             p.finish()
- 

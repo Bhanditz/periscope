@@ -214,6 +214,9 @@ class Network:
             results = eval_fn(images)
             preds = np.argsort(-results, axis=1)
             labels = np.expand_dims(labels, 1)
+            # find where (preds - labels) is zero - that is the predicted
+            # rank of the correct label, i.e., 0 if it's correct, or < 5
+            # if the right label is in the top 5 predicted.
             ranks = abs(preds - labels).argmin(axis=1)
             c_1 += sum(ranks == 0)
             c_5 += sum(ranks < 5)
