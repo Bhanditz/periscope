@@ -218,7 +218,7 @@ class CorpusCreator:
            self.write_seed_file(seed)
         self.write_dimensions(width, height)
         self.write_label_names()
-        # self.process_images('train', width, height, seed=seed, pretty=pretty)
+        self.process_images('train', width, height, seed=seed, pretty=pretty)
         self.process_images('val', width, height, seed=(seed + 1000),
             link=True, strip=100, pretty=pretty)
 
@@ -290,7 +290,7 @@ class CorpusCreator:
             shape=(len(imagenames), 3, height, width), dtype=np.int8, mode='w+')
         if strip:
             si = Image.new('RGB',
-                    (width * strip, -(-height // strip) * len(imagenames)))
+                    (width * strip, height * -(-len(imagenames) // strip)))
         if pretty:
             p = pretty.progress(len(imagenames))
         for i, (name, label) in enumerate(imagenames):
