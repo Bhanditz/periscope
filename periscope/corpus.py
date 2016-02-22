@@ -220,7 +220,7 @@ class CorpusCreator:
         self.write_label_names()
         self.process_images('train', width, height, seed=seed, pretty=pretty)
         self.process_images('val', width, height, seed=(seed + 1000),
-            link=True, strip=100, pretty=pretty)
+            link=True, texture=2048, pretty=pretty)
 
     def load_devkit_file(self, filename):
         """
@@ -276,7 +276,7 @@ class CorpusCreator:
         os.symlink(source, target)
 
     def process_images(self, prefix, width, height,
-             seed=None, pretty=None, link=False, strip=0):
+             seed=None, pretty=None, link=False, texture=0):
         if pretty:
             pretty.subtask('Processing {} images'.format(prefix))
         imagenames = self.load_devkit_file('{}.txt'.format(prefix))
@@ -288,9 +288,11 @@ class CorpusCreator:
         ia = np.memmap(
             os.path.join(self.target, '{}.images.db'.format(prefix)),
             shape=(len(imagenames), 3, height, width), dtype=np.int8, mode='w+')
-        if strip:
-            si = Image.new('RGB',
-                    (width * strip, height * -(-len(imagenames) // strip)))
+        if texture:
+            si = None
+            sw = texture // width
+            sh = texture // height
+            sn = 0
         if pretty:
             p = pretty.progress(len(imagenames))
         for i, (name, label) in enumerate(imagenames):
@@ -299,15 +301,21 @@ class CorpusCreator:
             la[i] = label
             im = self.load_pil_image(name, width, height)
             ia[i,:,:,:] = self.numpy_image(im)
-            if strip:
-                si.paste(im, ((i % strip) * width, (i // strip) * height))
+            if texture:
+                sx = (i % sw) * width
+                sy = ((i // sw) % sh) * height
+                if (not sx and not sy) or i == (len(imagenames) - 1):
+                    if si is not None:
+                        si.save(
+                            os.path.join(self.target, '{}.{}.tex.jpg'.format(
+                                prefix, sn)),
+                            "JPEG",
+                            subsampling=0,
+                            quality=95)
+                        sn += 1
+                    si = Image.new('RGB', (texture, texture))
+                si.paste(im, (sx, sy))
             if link:
                 self.link_image(name, prefix, i)
-        if strip:
-            si.save(
-                os.path.join(self.target, '{}.strip.jpg'.format(prefix)),
-                "JPEG",
-                subsampling=0,
-                quality=95)
         if pretty:
             p.finish()
