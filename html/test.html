@@ -1,0 +1,57 @@
+<style>
+body { margin: 0; }
+</style>
+<body>
+<script src="three.js"></script>
+<script>
+var scene, camera, renderer;
+var geometry, material, mesh;
+var texloader = new THREE.TextureLoader();
+var textures = [], count = 40, loaded = 0;
+for (var j = 0; j < count; ++j) {
+  (function(j) {
+    texloader.load('val.' + j + '.tex.jpg', function(tex) {
+      console.log('loaded texture', j);
+      textures[j] = tex;
+      loaded += 1;
+      if (loaded == count) { start(); }
+    });
+  })(j);
+}
+
+function start() {
+  init();
+  animate();
+}
+
+function init() {
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      1,
+      10000
+  );
+  camera.position.z = 1000;
+  geometry = new THREE.BoxGeometry(200, 300, 200);
+  material = new THREE.MeshBasicMaterial(
+      // { color: 0xff0000, wireframe: true }
+      { map: textures[3] }
+  );
+
+  mesh = new THREE.Mesh(geometry, material);
+  scene.add(mesh);
+
+  renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  mesh.rotation.x += 0.01;
+  mesh.rotation.y += 0.02;
+  renderer.render(scene, camera);
+}
+
+</script>
