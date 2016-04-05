@@ -304,3 +304,12 @@ class ZeroReluLayer(lasagne.layers.Layer):
     def get_output_for(self, input, **kwargs):
         return (input - self.mean) * self.invstd
 
+class ConstShiftLayer(lasagne.layers.Layer):
+    def __init__(self, incoming, shift=0, scale=1, **kwargs):
+        super(ConstShiftLayer, self).__init__(incoming, **kwargs)
+        self.shift = shift
+        self.scale = scale
+    def get_output_shape_for(self, input_shape):
+        return input_shape
+    def get_output_for(self, input, **kwargs):
+        return (input + self.shift) * self.scale

@@ -42,7 +42,7 @@ class Network:
             self.checkpoint = Checkpoint(kwargs['model'])
         data = kwargs.get('data', None)
         if data or (self.checkpoint and self.checkpoint.exists()):
-            self.load_checkpoint(data)
+            self.load_checkpoint(data, truncate=kwargs.get('truncate', None))
 
     def init_constants(self):
         self.output_size = 100
@@ -278,7 +278,13 @@ class Network:
             if self.checkpoint:
                 self.save_checkpoint()
 
-    def load_checkpoint(self, data):
+    def eval(self, corpus, kind='val', pretty=None):
+        eval_fn = self.eval_fn()
+        val_set = corpus.batches(kind, shape=self.crop_size)
+        acc1, acc5 = self.eval_1_5(kind, eval_fn, val_set)
+        return (acc1, acc5)
+
+    def load_checkpoint(self, data, truncate=False):
         if not data:
             data = self.checkpoint.load()
         (state, epoch, train_acc, val_acc) = data[:4]
@@ -289,6 +295,10 @@ class Network:
         saveparams = lasagne.layers.get_all_params(self.network)
         assert len(saveparams) == len(state)
         for p, v in zip(saveparams, state):
+            if truncate:
+                v = truncate_to_shape(v, p.get_value().shape)
+            else:
+                assert p.get_value().shape == v.shape
             p.set_value(v)
 
     def save_checkpoint(self):
@@ -299,3 +309,6 @@ class Network:
             (state, self.epoch, self.acc['train'], self.acc['val'],
              self.__class__.__module__ + '.' + self.__class__.__qualname__))
 
+
+def truncate_to_shape(value, shape):
+    return value[tuple(slice(0, s) for s in shape)]
