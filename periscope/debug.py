@@ -9,16 +9,39 @@ import pickle
 import os
 
 def is_simple_layer(layer):
+    """
+    Identifies "thinking" layers.
+    """
     return not (isinstance(layer, Conv2DLayer) or
         isinstance(layer, DenseLayer) or
         isinstance(layer, InputLayer))
 
 def is_trivial_layer(layer):
+    """
+    Identifies scaling layers like batchnorm, nonlinearity, etc.
+    """
     if (not is_simple_layer(layer) or isinstance(layer, Pool2DLayer) or
             isinstance(layer, ConcatLayer)):
         return False
     return (hasattr(layer, 'input_layer') and
             layer.input_shape == layer.output_shape)
+
+def compute_out_layers(net):
+    """
+    Layers followed by normalization or nonlinearity layers should
+    be considered together with those postprocessing layers.  This
+    function computes a map from each layer to its deepest
+    postprocessing layer with the same shape.
+    """
+    all_layers = net.all_layers()
+    out_layer = {}
+    for layer in reversed(all_layers):
+        if layer not in out_layer:
+            out_layer[layer] = layer
+        child = out_layer[layer]
+        if is_trivial_layer(layer) and layer.input_layer not in out_layer:
+            out_layer[layer.input_layer] = child
+    return out_layer
 
 def conv_padding(pad, filter_size):
     if pad == 'full':
@@ -161,7 +184,7 @@ class PurposeMapper:
         self.network = network.network
         self.corpus = corpus
         self.kind = kind
-        self.out_layer = self.compute_out_layers()
+        self.out_layer = compute_out_layers(network)
         self.n = n
         # Right now we collect only nonsimple layers
         self.collect = []
@@ -302,23 +325,6 @@ class PurposeMapper:
                     index += 1
         return im
 
-    def compute_out_layers(self):
-        """
-        Layers followed by normalization or nonlinearity layers should
-        be considered together with those postprocessing layers.  This
-        function computes a map from each layer to its deepest
-        postprocessing layer with the same shape.
-        """
-        all_layers = self.net.all_layers()
-        out_layer = {}
-        for layer in reversed(all_layers):
-            if layer not in out_layer:
-                out_layer[layer] = layer
-            child = out_layer[layer]
-            if is_trivial_layer(layer) and layer.input_layer not in out_layer:
-                out_layer[layer.input_layer] = child
-        return out_layer
-
     def compute(self, pretty=None):
         if pretty:
             pretty.task('Computing purpose database for {}'.format(
@@ -330,7 +336,7 @@ class PurposeMapper:
         crop_size = self.net.crop_size
         input_set = self.corpus.batches(
             self.kind,
-            batch_size=256,
+            batch_size=batch_size,
             shape=crop_size)
         for layer in layers:
             sh = lasagne.layers.get_output_shape(layer)
@@ -341,7 +347,6 @@ class PurposeMapper:
             pretty.subtask('Compiling debug function.')
         debug_fn = self.net.debug_fn(layers)
         # Now do the loop
-        # TODO: add pretty progress output
         if pretty:
             p = pretty.progress(len(input_set))
         s = 0
@@ -350,6 +355,7 @@ class PurposeMapper:
             for j, layer in enumerate(layers):
                 if len(outs[j].shape) == 4:
                     sh = outs[j].shape
+                    # TODO: consider adding an option for a gaussian blur here
                     flat = outs[j].reshape((sh[0], sh[1], sh[2] * sh[3]))
                     responses[layer][:,s:s+len(inp)] = np.transpose(
                          np.max(flat, axis=2))
@@ -372,7 +378,126 @@ class PurposeMapper:
                 (index, pro, responselocs[layer][arange, pro]))
 
     def generate_prototype_images(self):
+        # TODO: write this function.  It should generate filmstrips with
+        # blacked out regions (or tranparency!) indicating where the
+        # activations occurred.  It should run the network over the input
+        # a second time, but avoid re-running the network over inputs.
+        # collect together the set of all prototype inputs
+        samples = set()
+        layers = self.net.all_layers()
+        layerindex = {}
+        for (index, pro, loc) in self.prototypes:
+            samples.update(pro.tolist())
+            for p in pro:
+                if p not in layerindex:
+                    layerindex[p] = []
+                # Accumulate jobs to do for input p:
+                # create an image at location "loc" for the given layer.
+                layerindex[p].append((self.out_layer[layers[index]], loc))
+        samples = sorted(s)
+        # Next step: compute receptive field shapes for each layer
+        # Then iterate through every corpus sample in "samples"
+        # For each sample, go through the list of jobs
+        # For each job, grab the receptive field size and the ouput array.
+        # For XY output:
+        #   Map the activations back to input location centers.
+        #   Apply a gaussian blur based on this RF size.
+        #   Compute a cutoff.
+        #   Clip out the rectangular receptive field (TODO: consider edging in)
+        # Save the data away.
         pass
+
+class ActivationSample:
+    """
+    Creates, saves, and loads an activation vector database for every unit,
+    on a small sample of the training set.
+    """
+    def __init__(self, network, corpus, kind='train', n=2048):
+        self.net = network
+        self.network = network.network
+        self.corpus = corpus
+        self.kind = kind
+        self.out_layer = compute_out_layers(network)
+        self.n = n
+        # Right now we collect only nonsimple layers
+        self.collect = []
+        for index, layer in enumerate(self.net.all_layers()):
+            if index == 0:
+                continue
+            if not is_simple_layer(layer):
+                self.collect.append((index, self.out_layer[layer]))
+        self.activations = None
+
+    def save(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'activation.db')
+        with open(filename, 'wb+') as f:
+            f.seek(0)
+            f.truncate()
+            formatver = 1
+            pickle.dump(formatver, f)
+            pickle.dump(self.activations, f)
+
+    def load(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'activation.db')
+        with open(filename, 'rb') as f:
+            f.seek(0)
+            formatver = 1
+            formatver = pickle.load(f)
+            self.activations = pickle.load(f)
+
+    def exists(self, filename=None):
+        if filename is None:
+            filename = os.path.join(
+                self.net.checkpoint.directory, 'activation.db')
+        return os.path.isfile(filename)
+
+    def compute(self, pretty=None):
+        if pretty:
+            pretty.task('Computing activation database for {}'.format(
+                self.net.__class__.__name__))
+        layers = [layer for i, layer in self.collect]
+        self.activations = {}
+        rng = np.random.RandomState(1)
+        batch_size = 256
+        crop_size = self.net.crop_size
+        input_set = self.corpus.batches(
+            self.kind,
+            batch_size=batch_size,
+            shape=crop_size,
+            limit=self.n)
+        for layer in layers:
+            sh = lasagne.layers.get_output_shape(layer)
+            self.activations[layer] = np.zeros((self.n, sh[1]))
+        if pretty:
+            pretty.subtask('Compiling debug function.')
+        debug_fn = self.net.debug_fn(layers)
+        # Now do the loop
+        if pretty:
+            p = pretty.progress(len(input_set))
+        s = 0
+        for i, (inp, lab, name) in enumerate(input_set):
+            outs = debug_fn(inp)
+            for j, layer in enumerate(layers):
+                if len(outs[j].shape) == 4:
+                    # Remembering all the activations is too much data;
+                    # so we just sample one geometric location per input.
+                    # For each individual input, we will select a random
+                    # location and sample that same location for all the
+                    # units in this layer.
+                    samp = (np.arange(len(inp)), slice(None)) + tuple(
+                        rng.randint(0, m, len(inp)) for m in outs[j].shape[2:])
+                    self.activations[layer][s:s+len(inp),:] = outs[j][samp]
+                else:
+                    self.activations[layer][s:s+len(inp),:] = outs[j]
+            if pretty:
+                p.update(i + 1)
+            s += batch_size
+        if pretty:
+            p.finish()
 
 class Debugger:
     """

@@ -71,13 +71,24 @@ class Corpus:
             x = x[:,left:left+shape[0],top:top+shape[1]]
         return (x, y, name)
 
-    def batches(self, kind=None, batch_size=256, shape=None, randomize=False):
+    def batches(self,
+            kind=None,         # 'train' or 'val'
+            batch_size=256,    # Number of input images in a batch
+            shape=None,        # Cropping shape.
+            randomize=False,   # Whether to flip+randomly translate crop.
+            limit=None):       # Limit the corpus to this length/slice/subset.
         """
-        Returns an iterable.
+        Returns an iterable that returns (input, label, filename) batches.
         """
         X = self.X[kind]
         Y = self.Y[kind]
         names = self.names[kind]
+        if limit is not None:
+            if isinstance(limit, int):
+                limit = slice(0, limit)
+            X = X[limit]
+            Y = Y[limit]
+            names = names[limit]
         if shape is None:
             shape = X.shape[2:]
         return CorpusIterable(X, Y, names, batch_size, shape, randomize)
