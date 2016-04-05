@@ -411,8 +411,26 @@ class ActivationSample:
     """
     Creates, saves, and loads an activation vector database for every unit,
     on a small sample of the training set.
+
+    The self.activations database is an array
+        [(layernum, activationmatrix), ...]
+
+    layernum is the index of the relevant layer in the all_layers array.
+    activationmatrix has 4096 (number of samples) rows and one column for
+        each unit in the layer.
+
+    One activation is collected per hidden unit per input image. Within
+    convolutional layers, a single random X-Y coordinate is sampled (the
+    location is different for each input image, but same for all units
+    within a layer).
+
+    The sampled activation is after nonlinearities and normalization:
+    it is the number used as input to the next layer.  The purpose of
+    the activation db is to compute approximations of behavior, and
+    the observed behavior of a unit is how the next layer sees it.
     """
-    def __init__(self, network, corpus, kind='train', n=2048):
+    def __init__(self, network, corpus,
+                 kind='train', n=4096, empty=False, force=False, pretty=None):
         self.net = network
         self.network = network.network
         self.corpus = corpus
@@ -427,6 +445,13 @@ class ActivationSample:
             if not is_simple_layer(layer):
                 self.collect.append((index, self.out_layer[layer]))
         self.activations = None
+        if empty:
+            return
+        if force or not self.exists():
+            self.compute(pretty=pretty)
+            self.save()
+        else:
+            self.load()
 
     def save(self, filename=None):
         if filename is None:
@@ -460,7 +485,7 @@ class ActivationSample:
             pretty.task('Computing activation database for {}'.format(
                 self.net.__class__.__name__))
         layers = [layer for i, layer in self.collect]
-        self.activations = {}
+        activations = {}
         rng = np.random.RandomState(1)
         batch_size = 256
         crop_size = self.net.crop_size
@@ -471,7 +496,7 @@ class ActivationSample:
             limit=self.n)
         for layer in layers:
             sh = lasagne.layers.get_output_shape(layer)
-            self.activations[layer] = np.zeros((self.n, sh[1]))
+            activations[layer] = np.zeros((self.n, sh[1]))
         if pretty:
             pretty.subtask('Compiling debug function.')
         debug_fn = self.net.debug_fn(layers)
@@ -490,14 +515,17 @@ class ActivationSample:
                     # units in this layer.
                     samp = (np.arange(len(inp)), slice(None)) + tuple(
                         rng.randint(0, m, len(inp)) for m in outs[j].shape[2:])
-                    self.activations[layer][s:s+len(inp),:] = outs[j][samp]
+                    activations[layer][s:s+len(inp),:] = outs[j][samp]
                 else:
-                    self.activations[layer][s:s+len(inp),:] = outs[j]
+                    activations[layer][s:s+len(inp),:] = outs[j]
             if pretty:
                 p.update(i + 1)
             s += batch_size
         if pretty:
             p.finish()
+        self.activations = []
+        for index, layer in self.collect:
+            self.activations.append((index, activations[layer]))
 
 class Debugger:
     """
