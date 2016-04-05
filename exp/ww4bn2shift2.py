@@ -1,16 +1,33 @@
 from periscope import Network
 import lasagne
+from periscope.layers import ConstShiftLayer
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, DropoutLayer
+from lasagne.layers import NonlinearityLayer, BatchNormLayer
 from lasagne.layers.normalization import batch_norm
 from lasagne.init import HeUniform
 from lasagne.nonlinearities import identity
 import numpy as np
 
+# Use shifted batch_norm
+def shifted_batch_norm(layer, shift=0, **kwargs):
+    nonlinearity = getattr(layer, 'nonlinearity', None)
+    if nonlinearity is not None:
+        layer.nonlinearity = lasagne.nonlinearities.identity
+    if hasattr(layer, 'b') and layer.b is not None:
+        del layer.params[layer.b]
+        layer.b = None
+    layer = BatchNormLayer(layer, **kwargs)
+    if shift:
+        layer = ConstShiftLayer(layer, shift=shift)
+    if nonlinearity is not None:
+        layer = NonlinearityLayer(layer, nonlinearity)
+    return layer
+
 # Fixed application of batchnorm. 23669156 params.
-class Ww4bn2(Network):
+class Ww4bn2shift2(Network):
 
     def init_constants(self):
-        super(Ww4bn2, self).init_constants()
+        super(Ww4bn2shift2, self).init_constants()
         self.crop_size = (96, 96)
         self.batch_size = 64
         self.learning_rates = np.concatenate((
@@ -65,14 +82,13 @@ class Ww4bn2(Network):
         # 8th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv8')
-        network = batch_norm(network, gamma=None)
+        network = shifted_batch_norm(network, shift=-2, gamma=None)
 
         # Max pool.  Data size 12->6
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
         # 9th. Data size 6->1
-        network = lasagne.layers.DenseLayer(network, 1024,
-            W=HeUniform('relu'), name='fc9')
+        network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
         network = DropoutLayer(network)

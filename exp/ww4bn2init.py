@@ -2,15 +2,15 @@ from periscope import Network
 import lasagne
 from lasagne.layers import Conv2DLayer, MaxPool2DLayer, DropoutLayer
 from lasagne.layers.normalization import batch_norm
-from lasagne.init import HeUniform
+from lasagne.init import HeUniform, Constant
 from lasagne.nonlinearities import identity
 import numpy as np
 
 # Fixed application of batchnorm. 23669156 params.
-class Ww4bn2(Network):
+class Ww4bn2init(Network):
 
     def init_constants(self):
-        super(Ww4bn2, self).init_constants()
+        super(Ww4bn2init, self).init_constants()
         self.crop_size = (96, 96)
         self.batch_size = 64
         self.learning_rates = np.concatenate((
@@ -65,14 +65,13 @@ class Ww4bn2(Network):
         # 8th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv8')
-        network = batch_norm(network, gamma=None)
+        network = batch_norm(network, beta=Constant(-1), gamma=None)
 
         # Max pool.  Data size 12->6
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
         # 9th. Data size 6->1
-        network = lasagne.layers.DenseLayer(network, 1024,
-            W=HeUniform('relu'), name='fc9')
+        network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
         network = DropoutLayer(network)

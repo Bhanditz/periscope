@@ -6,29 +6,27 @@ from lasagne.init import HeUniform
 from lasagne.nonlinearities import identity
 import numpy as np
 
-# Fixed application of batchnorm. 23669156 params.
-class Ww4bn2(Network):
+# Ww4 without batchnorm. 23665316 params.
+class Ww4(Network):
 
     def init_constants(self):
-        super(Ww4bn2, self).init_constants()
+        super(Ww4, self).init_constants()
         self.crop_size = (96, 96)
         self.batch_size = 64
         self.learning_rates = np.concatenate((
-            [0.005] * 10,
-            [0.0005] * 10,
-            [0.00005] * 10,
-            [0.000005] * 10
+            [0.005] * 20,
+            [0.0005] * 20,
+            [0.00005] * 20,
+            [0.000005] * 20
         ))
 
     def hidden_layers(self, network, **kwargs):
         # 1st. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
             W=HeUniform('relu'))
-        network = batch_norm(network, gamma=None)
         # 2nd. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
             W=HeUniform('relu'))
-        network = batch_norm(network, gamma=None)
 
         # Max pool. Data size 96->48
         network = MaxPool2DLayer(network, (2, 2), stride=2)
@@ -36,11 +34,9 @@ class Ww4bn2(Network):
         # 3rd. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
             W=HeUniform('relu'))
-        network = batch_norm(network, gamma=None)
         # 4th. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
             W=HeUniform('relu'))
-        network = batch_norm(network, gamma=None)
 
         # Max pool. Data size 48->24
         network = MaxPool2DLayer(network, (2, 2), stride=2)
@@ -48,11 +44,9 @@ class Ww4bn2(Network):
         # 5th. Data size 24->24
         network = Conv2DLayer(network, 256, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv5')
-        network = batch_norm(network, gamma=None)
         # 6th. Data size 24->24
         network = Conv2DLayer(network, 256, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv6')
-        network = batch_norm(network, gamma=None)
 
         # Max pool.  Data size 24->12
         network = MaxPool2DLayer(network, (2, 2), stride=2)
@@ -60,19 +54,16 @@ class Ww4bn2(Network):
         # 7th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv7')
-        network = batch_norm(network, gamma=None)
 
         # 8th. Data size 12->12
         network = Conv2DLayer(network, 512, (3, 3), pad='same',
             W=HeUniform('relu'), name='conv8')
-        network = batch_norm(network, gamma=None)
 
         # Max pool.  Data size 12->6
         network = MaxPool2DLayer(network, (2, 2), stride=2)
 
         # 9th. Data size 6->1
-        network = lasagne.layers.DenseLayer(network, 1024,
-            W=HeUniform('relu'), name='fc9')
+        network = lasagne.layers.DenseLayer(network, 1024, W=HeUniform('relu'))
         network = batch_norm(network, gamma=None)
 
         network = DropoutLayer(network)
