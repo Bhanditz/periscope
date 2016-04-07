@@ -44,8 +44,7 @@ class Network:
         if data or (self.checkpoint and self.checkpoint.exists()):
             self.load_checkpoint(
                 data,
-                truncate=kwargs.get('truncate', None),
-                anyshape=kwargs.get('anyshape', None))
+                truncate=kwargs.get('truncate', None))
 
     def init_constants(self):
         self.output_size = 100
@@ -117,6 +116,14 @@ class Network:
         for layer in self.all_layers():
             if layer.name == name:
                 return layer
+
+    def layer_numbered(self, number):
+        return self.all_layers()[number]
+
+    def layer_number(self, layer):
+        for index, check in enumerate(self.all_layers()):
+            if layer == check:
+                return index
 
     def eval_fn(self):
         if not self._eval_fn:
@@ -287,7 +294,7 @@ class Network:
         acc1, acc5 = self.eval_1_5(kind, eval_fn, val_set)
         return (acc1, acc5)
 
-    def load_checkpoint(self, data, truncate=False, anyshape=False):
+    def load_checkpoint(self, data, truncate=False):
         if not data:
             data = self.checkpoint.load()
         (state, epoch, train_acc, val_acc) = data[:4]
@@ -300,7 +307,7 @@ class Network:
         for p, v in zip(saveparams, state):
             if truncate:
                 v = truncate_to_shape(v, p.get_value().shape)
-            elif not anyshape:
+            else:
                 assert p.get_value().shape == v.shape
             p.set_value(v)
 

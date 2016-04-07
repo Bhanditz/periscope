@@ -6,15 +6,22 @@ from lasagne.layers import DenseLayer, InputLayer, Pool2DLayer, DropoutLayer
 from PIL import Image
 import numpy as np
 import pickle
+import copy
 import os
+
+def is_dendritic_layer(layer):
+    """
+    Identifies "thinking" layers that add up inputs.
+    """
+    return (isinstance(layer, Conv2DLayer) or
+        isinstance(layer, DenseLayer) or
+        isinstance(layer, InputLayer))
 
 def is_simple_layer(layer):
     """
-    Identifies "thinking" layers.
+    Identifies "plumbing" layers.
     """
-    return not (isinstance(layer, Conv2DLayer) or
-        isinstance(layer, DenseLayer) or
-        isinstance(layer, InputLayer))
+    return not is_dendritic_layer(layer)
 
 def is_trivial_layer(layer):
     """
@@ -42,6 +49,73 @@ def compute_out_layers(net):
         if is_trivial_layer(layer) and layer.input_layer not in out_layer:
             out_layer[layer.input_layer] = child
     return out_layer
+
+def layer_inputs(layer):
+    if hasattr(layer, 'input_layers'):
+        return layer.input_layers
+    if hasattr(layer, 'input_layer'):
+        return [layer.input_layer]
+    return []
+
+def compute_axial_maps(net):
+    """
+    Axial layers are the ones whose activations are directly picked up
+    by dendritic layers.  Dropping an axon means dropping weights in
+    dendritic layers fed by the axon, and dropping units in the dendritic
+    layers that feed the axon.
+
+    This computes two maps (axial_endpoint, axial_synapse).
+      - axial_endpoint[layer] maps a layer to the axial endpoint layers
+        to which it eventually outputs, plus an offset for each. If a
+        ConcatLayer is in the axon, unit #n will be shifted to unit
+        #n+offset at the endpoint.  In the case of multiple dependencies,
+        there may be more than one axial endpoint.
+      - axial_synapse[endpoint] maps to an array of dendritic layers
+        which take their input from the given axial endpoint.
+    """
+    # Go through all layers, output first.
+    all_layers = net.all_layers()
+    axial_synapse = {}
+    axial_endpoint = {}
+    for layer in reversed(all_layers):
+        if layer not in axial_endpoint:
+            axial_endpoint[layer] = [{'layer': layer, 'offset': 0, 'par': []}]
+            axial_synapse[layer] = []
+        if is_dendritic_layer(layer):
+            # If it's a dendritic layer, then its inputs are axial layers.
+            for in_layer in layer_inputs(layer):
+                # Remember axial info.
+                if in_layer not in axial_synapse:
+                    axial_synapse[in_layer] = []
+                axial_synapse[in_layer].append(layer)
+                # Remember axial layer
+                if in_layer not in axial_endpoint:
+                    axial_endpoint[in_layer] = []
+                axial_endpoint[in_layer].append(
+                    {'layer': in_layer, 'offset': 0, 'par': []})
+        else:
+            # Propagate axons backwords to the attached dendritic layer.
+            # TODO: we must also track batchnorm layers along the way
+            axons = axial_endpoint[layer]
+            if len(layer.params):
+               for a in axons:
+                   a['par'].append(layer)
+            offset = 0
+            for in_layer in layer_inputs(layer):
+                if in_layer not in axial_endpoint:
+                    axial_endpoint[in_layer] = []
+                axial_endpoint[in_layer].extend([
+                    {'layer': a['layer'], 'offset': a['offset'] + offset,
+                     'par': a['par']}
+                    for a in axons])
+                # If it's a concat layer, then figure its input offsets.
+                if isinstance(layer, ConcatLayer):
+                    offset += lasagne.layers.get_output_shape(in_layer)[1]
+                # TODO: consider the effect of shape layers - not handled.
+    return (axial_endpoint, axial_synapse)
+
+def compute_next_layers(net):
+    out_layer = compute_out_layers(net)
 
 def conv_padding(pad, filter_size):
     if pad == 'full':
@@ -409,8 +483,8 @@ class PurposeMapper:
 
 class ActivationSample:
     """
-    Creates, saves, and loads an activation vector database for every unit,
-    on a small sample of the training set.
+    Creates, saves, and loads an activation vector database for every
+    axial endpoint unit, on a small sample of the training set.
 
     The self.activations database is an array
         [(layernum, activationmatrix), ...]
@@ -435,15 +509,13 @@ class ActivationSample:
         self.network = network.network
         self.corpus = corpus
         self.kind = kind
-        self.out_layer = compute_out_layers(network)
+        (axial_endpoints, axial_synapse) = compute_axial_maps(network)
         self.n = n
         # Right now we collect only nonsimple layers
         self.collect = []
-        for index, layer in enumerate(self.net.all_layers()):
-            if index == 0:
-                continue
-            if not is_simple_layer(layer):
-                self.collect.append((index, self.out_layer[layer]))
+        for layer in axial_synapse.keys():
+            index = self.net.layer_number(layer)
+            self.collect.append((index, layer))
         self.activations = None
         if empty:
             return
@@ -473,6 +545,12 @@ class ActivationSample:
             formatver = 1
             formatver = pickle.load(f)
             self.activations = pickle.load(f)
+
+    def layernum(self, num):
+        for (index, act) in self.activations:
+            if index == num:
+                return act
+        return None
 
     def exists(self, filename=None):
         if filename is None:
@@ -526,6 +604,114 @@ class ActivationSample:
         self.activations = []
         for index, layer in self.collect:
             self.activations.append((index, activations[layer]))
+
+class NetworkReducer:
+    """
+    Clones a network while hacking out and healing subsets of neurons.
+    """
+    def __init__(self, network, corpus):
+        self.net = network
+        self.network = network.network
+        self.corpus = corpus
+
+    def create_reduced_network(self, sizes):
+        """
+        Sizes is a list of tuples (layer, integer), indicating the
+        size of each layer to shrink.
+        """
+        # Load the ActivationSample for this network instance
+        acts = ActivationSample(self.net, self.corpus)
+        result = copy.deepcopy(self.net)
+        result.checkpoint = None
+        (axial_endpoints, axial_synapse) = compute_axial_maps(result)
+        # Layers should be listed from closest-to-output first,
+        # and then loop towards the beginning.
+        # TODO: add a sort.
+        for layer, numunits in sizes:
+            # if layer is a string, look it up in net
+            if isinstance(layer, str):
+                layer = result.layer_named(layer)
+            else:
+                layer = result.layer_numbered(self.net(layer_number(layer)))
+            numunits = int(numunits)
+            # chop the layer's parameters
+            weights = layer.W.get_value()
+            oldsize = weights.shape[0]
+            layer.W.set_value(weights[(slice(0, numunits), ) + tuple(
+                (slice(None) for x in weights.shape[1:]))])
+            #    (slice(0, numunits), ) +
+            #    tuple((slice(None) for x in weights.shape[1:]))])
+            if hasattr(layer, 'b') and layer.b:
+                biases = layer.b.get_value()
+                layer.b.set_value(biases[:numunits])
+            # also truncate batchnorm/relu or other parameterized layers
+            # TODO: think about the case of more than one endpoint
+            par = axial_endpoints[layer][0]['par']
+            for parlayer in par:
+                for param in parlayer.params:
+                    val = param.get_value()
+                    # assume that parameters of this dimension are
+                    # one-per-channel and need to be truncated.
+                    # TODO: maybe clean up this assumption.
+                    if val.shape[0] == oldsize:
+                        param.set_value(val[(slice(0, numunits), ) + tuple(
+                            (slice(None) for x in val.shape[1:]))])
+            # get the next layer's parameters
+            # TODO: handle the case of more than one endpoint
+            endpoint = axial_endpoints[layer][0]['layer']
+            # solve least squares for the remaining units
+            # TODO: handle the case when there are offsets
+            activations = acts.layernum(result.layer_number(endpoint))
+            # dimensions: (4096, size)
+            A = activations[:,:numunits]
+            # dimensions: (4096, removed)
+            B = activations[:,numunits:]
+            # Solve x = np.linagl.lstsq(A, B) for the original layer
+            # X dimensions: (size, removed)
+            (X, res, rank, s) = np.linalg.lstsq(A, B)
+            # get the dendtritic layers
+            # TODO: handle the case when the endpoint has more than one output
+            syn = axial_synapse[endpoint][0]
+            # TODO: think about b.
+            # dimensions: (syn_units, in_units, 3, 3)
+            syn_weights = syn.W.get_value()
+            # Handle flattened input of dense layer case by unflattening
+            flattened = None
+            if isinstance(syn, DenseLayer):
+                unflattened = endpoint.output_shape[1:]
+                flattened = syn_weights.shape[0]
+                syn_units = syn_weights.shape[1:]
+                syn_weights.shape = (unflattened + syn_units)
+                # transpose the weight matrix to conv2d orientation:
+                # syn dimension first
+                syn_weights = np.rollaxis(
+                    syn_weights, len(syn_weights.shape) - 1)
+            # dimensions: (syn_units, size, 3, 3)
+            kept_weights = syn_weights[(slice(None), slice(0, numunits)) +
+                tuple((slice(None) for s in syn_weights.shape[2:]))]
+            # dimensions: (syn_units, removed, 3, 3)
+            removed_weights = syn_weights[(slice(None), slice(numunits, None)) +
+                tuple((slice(None) for s in syn_weights.shape[2:]))]
+            # multiply x by the weights that are being removed
+            # Adjusted weights. dimensions: (size, syn_units, 3, 3)
+            adj_weights = np.tensordot(X, removed_weights, axes=([1], [1]))
+            if flattened:
+                # transpose the weight matrix to dense orientation:
+                # syn dimension last (size, 3, 3, syn_units)
+                adj_weights = np.rollaxis(
+                    adj_weights, 1, len(adj_weights.shape))
+                # now reflatten: (size*3*3, syn_units)
+                adj_weights = adj_weights.reshape(
+                    (flattened * numunits // oldsize,) + syn_units)
+                kept_weights = kept_weights.reshape(
+                    (flattened * numunits // oldsize,) + syn_units)
+            else:
+              # Adjusted weights. dimensions: (syn_units, size, 3, 3)
+              adj_weights = np.rollaxis(adj_weights, 1)
+            # New weights.  Cast back down to float32.
+            syn.W.set_value((kept_weights + adj_weights).astype(np.float32))
+        # That's it.
+        return result
 
 class Debugger:
     """

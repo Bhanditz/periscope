@@ -23,11 +23,11 @@ class Ww4bn2(Network):
     def hidden_layers(self, network, **kwargs):
         # 1st. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
-            W=HeUniform('relu'))
+            W=HeUniform('relu'), name='conv1')
         network = batch_norm(network, gamma=None)
         # 2nd. Data size 96->96
         network = Conv2DLayer(network, 64, (3, 3), pad='same',
-            W=HeUniform('relu'))
+            W=HeUniform('relu'), name='conv2')
         network = batch_norm(network, gamma=None)
 
         # Max pool. Data size 96->48
@@ -35,11 +35,11 @@ class Ww4bn2(Network):
 
         # 3rd. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
-            W=HeUniform('relu'))
+            W=HeUniform('relu'), name='conv3')
         network = batch_norm(network, gamma=None)
         # 4th. Data size 48->48
         network = Conv2DLayer(network, 128, (3, 3), pad='same',
-            W=HeUniform('relu'))
+            W=HeUniform('relu'), name='conv4')
         network = batch_norm(network, gamma=None)
 
         # Max pool. Data size 48->24
