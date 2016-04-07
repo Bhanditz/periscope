@@ -636,11 +636,15 @@ class NetworkReducer:
             numunits = int(numunits)
             # chop the layer's parameters
             weights = layer.W.get_value()
-            oldsize = weights.shape[0]
-            layer.W.set_value(weights[(slice(0, numunits), ) + tuple(
-                (slice(None) for x in weights.shape[1:]))])
-            #    (slice(0, numunits), ) +
-            #    tuple((slice(None) for x in weights.shape[1:]))])
+            if isinstance(layer, DenseLayer):
+                # Dense layers organize weights as (in_units, out_units)
+                layer.W.set_value(weights[:, :numunits])
+                oldsize = weights.shape[1]
+            else:
+                # Conv layers organize weights as (out_units, in_units, x, y)
+                layer.W.set_value(weights[(slice(0, numunits), ) + tuple(
+                    (slice(None) for x in weights.shape[1:]))])
+                oldsize = weights.shape[0]
             if hasattr(layer, 'b') and layer.b:
                 biases = layer.b.get_value()
                 layer.b.set_value(biases[:numunits])
