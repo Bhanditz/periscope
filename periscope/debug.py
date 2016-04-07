@@ -695,21 +695,20 @@ class NetworkReducer:
             # multiply x by the weights that are being removed
             # Adjusted weights. dimensions: (size, syn_units, 3, 3)
             adj_weights = np.tensordot(X, removed_weights, axes=([1], [1]))
+            # Adjusted weights. dimensions: (syn_units, size, 3, 3)
+            adj_weights = np.rollaxis(adj_weights, 1)
+            # Incorporate adjustment
+            sum_weights = kept_weights + adj_weights
             if flattened:
                 # transpose the weight matrix to dense orientation:
                 # syn dimension last (size, 3, 3, syn_units)
-                adj_weights = np.rollaxis(
-                    adj_weights, 1, len(adj_weights.shape))
+                sum_weights = np.rollaxis(
+                    sum_weights, 0, len(adj_weights.shape))
                 # now reflatten: (size*3*3, syn_units)
-                adj_weights = adj_weights.reshape(
+                sum_weights = sum_weights.reshape(
                     (flattened * numunits // oldsize,) + syn_units)
-                kept_weights = kept_weights.reshape(
-                    (flattened * numunits // oldsize,) + syn_units)
-            else:
-              # Adjusted weights. dimensions: (syn_units, size, 3, 3)
-              adj_weights = np.rollaxis(adj_weights, 1)
             # New weights.  Cast back down to float32.
-            syn.W.set_value((kept_weights + adj_weights).astype(np.float32))
+            syn.W.set_value(sum_weights.astype(np.float32))
         # That's it.
         return result
 
