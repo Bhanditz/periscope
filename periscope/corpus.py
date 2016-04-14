@@ -161,6 +161,15 @@ class CorpusIterable:
     def count(self):
         return len(self.X)
 
+    def raw_x(self):
+        return self.X
+
+    def raw_y(self):
+        return self.Y
+
+    def raw_names(self):
+        return self.names
+
     def __iter__(self):
         end = len(self.X)
         cropv = self.X.shape[2] - self.shape[0]

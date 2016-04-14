@@ -294,6 +294,28 @@ class Network:
         acc1, acc5 = self.eval_1_5(kind, eval_fn, val_set)
         return (acc1, acc5)
 
+    def predict(self, corpus, count=None, kind='val', pretty=None):
+        eval_fn = self.eval_fn()
+        val_set = corpus.batches(kind, shape=self.crop_size)
+        if count is None:
+            count = val_set.count()
+        index = 0
+        result = np.zeros((count, self.output_size))
+        if pretty:
+            pretty.subtask("Evaluating on {} images of {} set".format(
+                count, kind))
+            p = pretty.progress(count)
+        for val_batch in val_set:
+            images, labels, names = val_batch
+            batch_size = len(names)
+            result[index : index + batch_size, :] = eval_fn(images)
+            index += batch_size
+            if pretty:
+                p.update(index)
+        if pretty:
+            p.finish()
+        return result
+
     def load_checkpoint(self, data, truncate=False):
         if not data:
             data = self.checkpoint.load()
