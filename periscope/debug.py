@@ -605,13 +605,209 @@ class ActivationSample:
         for index, layer in self.collect:
             self.activations.append((index, activations[layer]))
 
+class NetworkMerger:
+    def __init__(self, nets, corpus):
+        self.nets = nets
+        self.corpus = corpus
+
+    def create_merged_network(self):
+        # For now, we just combine full layers
+        # Starting from the bottom, pile one network into the other
+        # so we can run as a double-wide single network, summing results
+        # right at the softmax/output layer.
+        result = copy.deepcopy(self.nets[0])
+        result.checkpoint = None
+        layers = result.all_layers()
+        # Do all the layers EXCEPT the last (output) layer
+        plaininput = True
+        for layernum, layer in enumerate(layers[:-1]):
+            if hasattr(layer, 'W'):
+                print("Merging dendrite layer", layernum, layer)
+                self.merge_one_dendrite_layer(
+                        result, layernum, share_input=plaininput)
+                plaininput = False
+            else:
+                print("Merging simple layer", layernum, layer)
+                self.merge_one_simple_layer(result, layernum)
+        # The last layer should be the output layer with softmax
+        print("Merging output layer", len(layers)- 1)
+        self.merge_one_dendrite_layer(
+                result, len(layers) - 1, share_output=True)
+        return result
+
+    def merge_one_simple_layer(self, result, layernum):
+        print("Merging", layernum, result.layer_numbered(layernum))
+        allparams = [result.layer_numbered(layernum).params] + [
+            net.layer_numbered(layernum).params for net in self.nets]
+        # Loop through all vector parameters
+        for params in zip(*allparams):
+            tparam = params[0]
+            nparams = params[1:]
+            # Accumulate parameter values in a vector.
+            rvalue = np.zeros((0,), dtype='float32')
+            for npar in nparams:
+                npval = npar.get_value()
+                # Don't know what to do with non-vector parameters
+                assert len(npval.shape) == 1
+                assert npval.shape[0] > 2
+                rvalue = np.concatenate((rvalue, npval))
+            print('Setting', tparam, rvalue.shape)
+            tparam.set_value(rvalue)
+
+    def merge_one_dendrite_layer(
+            self, res, layernum, share_input=False, share_output=False):
+        target = res.layer_numbered(layernum)
+        print("Merging", layernum, target, "share_input", share_input,
+                "share_output", share_output)
+        if isinstance(target, DenseLayer):
+            print("Using DenseLayer axis")
+            inpd = 0
+            outd = 1
+        else:
+            print("Using ConvLayer axis")
+            inpd = 1
+            outd = 0
+        convshape = target.W.get_value().shape[2:]
+        resw = np.zeros((0, 0) + convshape, dtype='float32')
+        resb = np.zeros((0,), dtype='float32')
+        outindex = inindex = 0
+        hasbias = False
+        for net in self.nets:
+            layer = net.layer_numbered(layernum)
+            netw = layer.W.get_value()
+            if share_output:
+                # When output is being shared, set output shape equal.
+                if resw.shape[outd] != netw.shape[outd]:
+                    rshape = list(resw.shape)
+                    rshape[outd] = netw.shape[outd]
+                    resw.shape = rshape
+                # Concatenate along the input axis only.
+                print('layernum',layernum,resw.shape, netw.shape,inpd)
+                resw = np.concatenate((resw, netw), axis=inpd)
+                print('result', resw.shape)
+                # Bias aligns with output shape, so must be added.
+                if hasattr(layer, 'b') and layer.b:
+                    hasbias = True
+                    netb = layer.b.get_value()
+                    # If bias is present, add it!
+                    if len(resb) == 0:
+                        resb = netb
+                    else:
+                        resb = resb + netb
+                continue
+            if share_input:
+                # When input is being shared, set input shape equal.
+                if resw.shape[inpd] != netw.shape[inpd]:
+                    rshape = list(resw.shape)
+                    rshape[inpd] = netw.shape[inpd]
+                    resw.shape = tuple(rshape)
+            else:
+                # Remember this number of units before we change it.
+                toadd = netw.shape[inpd]
+                # Concatenate zeroes to the left of the next network.
+                inpzshape = list(netw.shape)
+                inpzshape[inpd] = resw.shape[inpd]
+                netw = np.concatenate(
+                        (np.zeros(inpzshape, dtype='float32'), netw), axis=inpd)
+                # Concatenate zeroes to the right of the accumulated network.
+                inpzshape = list(resw.shape)
+                inpzshape[inpd] = toadd # old netw.shape[inpd]
+                resw = np.concatenate(
+                        (resw, np.zeros(inpzshape, dtype='float32')), axis=inpd)
+            # Concatentate the next network below the accumulated network.
+            print('layernum',layernum,resw.shape, netw.shape,outd)
+            resw = np.concatenate((resw, netw), axis=outd)
+            print('result', resw.shape)
+            if hasattr(layer, 'b') and layer.b:
+                hasbias = True
+                netb = layer.b.get_value()
+                # If bias is present, concatenate it to the end
+                resb = np.concatenate((resb, netb))
+        # After everything has been concatenated, mutate the target network.
+        print('final shape', resw.shape)
+        target.W.set_value(resw)
+        if hasbias:
+            target.b.set_value(resb)
+
+"""
+    def merge_one_denselayer(self, result, layernum):
+        outdims = [net.layer_numbered(layernum).W.get_value().shape[1]
+                    for net in self.nets]
+        indims = [net.layer_numbered(layernum).W.get_value().shape[0]
+                    for net in self.nets]
+        resultw = np.zeros((sum(indims), sum(outdims)))
+        resultb = np.zeros(sum(outdims))
+        outindex = inindex = 0
+        hasbias = False
+        for net in self.nets:
+            layer = net.layer_numbered(layernum)
+            netw = layer.W.get_value()
+            resultw[inindex:inindex + netw.shape[0],
+                    outindex:outindex + netw.shape[1]] = netw
+            if hasattr(layer, 'b'):
+                hasbias = True
+                netb = net.layer_numbered(layernum).W.get_value()
+                resultb[outindex:outindex + netb.shape[0]] = netb
+            inindex += netw.shape[0]
+            outindex += netw.shape[1]
+        target = result.layer_numbered(layernum)
+        target.W.set_value(resultw)
+        if hasbias:
+            target.b.set_value(resultb)
+
+    def merge_one_convlayer(self, result, layernum, share_input=False):
+        target = result.layer_numbered(layernum)
+        convshape = target.W.get_value().shape[2:]
+        outdims = [net.layer_numbered(layernum).W.get_value().shape[0]
+                    for net in self.nets]
+        indims = [net.layer_numbered(layernum).W.get_value().shape[1]
+                    for net in self.nets]
+        resultw = np.zeros((sum(outdims), sum(indims)) + convshape)
+        resultb = np.zeros(sum(outdims))
+        outindex = inindex = 0
+        hasbias = False
+        for net in self.nets:
+            layer = net.layer_numbered(layernum)
+            netw = layer.W.get_value()
+            resultw[outoutdex:outoutdex + netw.shape[0],
+                    inindex:inindex + netw.shape[1], :, :] = netw
+            if hasattr(layer, 'b'):
+                hasbias = True
+                netb = net.layer_numbered(layernum).W.get_value()
+                resultb[outindex:outindex + netb.shape[0]] = netb
+            outindex += netw.shape[0]
+            inindex += netw.shape[1]
+        target.W.set_value(resultw)
+        if hasbias:
+            target.b.set_value(resultb)
+
+    def merge_one_scalelayer(self, result, layernum):
+        target = result.layer_numbered(layernum)
+        allparams = [target.params] + [net.layer_number(layernum).params
+                for net in self.nets]
+        # Loop through all vector parameters
+        for params in zip(allparams):
+            tparam = params[0]
+            nparams = params[1:]
+            # Don't know what to do with non-vector parameters
+            assert len(tparam.get_value().shape) == 1
+            assert tparam.get_value().shape[0] > 2
+            rvalue = np.zeros([np.get_value().shape[0] for np in nparams])
+            pindex = 0
+            for np in nparams:
+                npval = np.get_value()
+                rvalue[pindex:pindex + npval.shape[0]] = npval
+                pindex += npval.shape[0]
+            tparam.set_value(rvalue)
+
+"""
+
 class NetworkReducer:
     """
     Clones a network while hacking out and healing subsets of neurons.
     """
     def __init__(self, network, corpus):
         self.net = network
-        self.network = network.network
         self.corpus = corpus
 
     def create_reduced_network(self, sizes):

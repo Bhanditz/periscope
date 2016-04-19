@@ -3,11 +3,11 @@ import pickle
 import re
 from periscope.naming import class_for_name
 
-def load_from_checkpoint(directory):
+def load_from_checkpoint(directory, **kwargs):
     cp = Checkpoint(directory)
     data = (s, e, t, v, classname) = cp.load()
     cls = class_for_name(classname)
-    return cls(model=directory, data=data)
+    return cls(model=directory, data=data, **kwargs)
 
 class Checkpoint:
     def __init__(self, directory):
