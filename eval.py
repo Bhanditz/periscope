@@ -34,7 +34,8 @@ else:
     try:
         # an existing model specifies its network class.
         net = load_from_checkpoint(args.model, truncate=args.truncate)
-    except:
+    except Exception as e:
+        print(e)
         # a network class name can be guessed by using the model name.
         shortname = args.model.split('/')[-1].split('-')[0]
         net = class_for_shortname(shortname)(model=args.model)
