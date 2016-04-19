@@ -11,6 +11,10 @@ parser.add_argument('--corpus', help='corpus directory', default='corpus/mp')
 parser.add_argument('--net', help='name of network model class name',
      default=None)
 parser.add_argument('--model', help='directory for checkpoints', default=None)
+parser.add_argument('--epoch', help='starting epoch', type=int, default=None)
+parser.add_argument('--truncate', dest='truncate', action='store_true')
+parser.add_argument('--no-truncate', dest='truncate', action='store_false')
+parser.set_defaults(truncate=False)
 args = parser.parse_args()
 
 assert args.model or args.net
@@ -24,12 +28,15 @@ if '/' not in args.model:
 
 if args.net is not None:
     # use an explicit net name.
-    net = class_for_shortname(args.net)(model=args.model)
+    net = class_for_shortname(args.net)(
+            model=args.model, truncate=args.truncate, epoch=args.epoch)
 else:
     try:
         # an existing model specifies its network class.
-        net = load_from_checkpoint(args.model)
-    except:
+        net = load_from_checkpoint(args.model,
+                truncate=args.truncate, epoch=args.epoch)
+    except Exception as e:
+        print(e)
         # a network class name can be guessed by using the model name.
         shortname = args.model.split('/')[-1].split('-')[0]
         net = class_for_shortname(shortname)(model=args.model)

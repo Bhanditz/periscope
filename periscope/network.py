@@ -44,7 +44,8 @@ class Network:
         if data or (self.checkpoint and self.checkpoint.exists()):
             self.load_checkpoint(
                 data,
-                truncate=kwargs.get('truncate', None))
+                truncate=kwargs.get('truncate', None),
+                epoch=kwargs.get('epoch', None))
 
     def init_constants(self):
         self.output_size = 100
@@ -316,9 +317,9 @@ class Network:
             p.finish()
         return result
 
-    def load_checkpoint(self, data, truncate=False):
+    def load_checkpoint(self, data, truncate=False, epoch=None):
         if not data:
-            data = self.checkpoint.load()
+            data = self.checkpoint.load(epoch=epoch)
         (state, epoch, train_acc, val_acc) = data[:4]
         self.epoch = epoch
         self.acc['train'] = train_acc

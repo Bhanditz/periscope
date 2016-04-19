@@ -5,7 +5,7 @@ from periscope.naming import class_for_name
 
 def load_from_checkpoint(directory, **kwargs):
     cp = Checkpoint(directory)
-    data = (s, e, t, v, classname) = cp.load()
+    data = (s, e, t, v, classname) = cp.load(epoch=kwargs.get('epoch', None))
     cls = class_for_name(classname)
     return cls(model=directory, data=data, **kwargs)
 
@@ -31,7 +31,10 @@ class Checkpoint:
         return max([int(self.mdlpat(x).group(1)) for x in files])
 
     def load(self, epoch=None):
-        if epoch is None:
+        explicit_epoch = False
+        if epoch is not None:
+            explicit_epoch = True
+        else:
             epoch = self.latest_checkpoint_number()
         if epoch is None:
             raise IOError('no checkpoint found')
@@ -40,7 +43,9 @@ class Checkpoint:
             f.seek(0)
             formatver = pickle.load(f)
             state = pickle.load(f)
-            epoch = pickle.load(f)
+            _ = pickle.load(f)
+            if not explicit_epoch:
+                epoch = _
             training = pickle.load(f)
             validation = pickle.load(f)
             classname = None
