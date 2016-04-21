@@ -329,7 +329,8 @@ class Network:
         assert len(saveparams) == len(state)
         for p, v in zip(saveparams, state):
             if truncate:
-                v = truncate_to_shape(v, p.get_value().shape)
+                pass
+                # v = truncate_to_shape(v, p.get_value().shape)
             else:
                 assert p.get_value().shape == v.shape
             p.set_value(v)

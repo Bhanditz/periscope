@@ -110,9 +110,25 @@ def compute_axial_maps(net):
                     for a in axons])
                 # If it's a concat layer, then figure its input offsets.
                 if isinstance(layer, ConcatLayer):
-                    offset += lasagne.layers.get_output_shape(in_layer)[1]
+                    offset += adjusted_output_shape(in_layer)[1]
                 # TODO: consider the effect of shape layers - not handled.
     return (axial_endpoint, axial_synapse)
+
+def count_output_filters(layer):
+    if isinstance(layer, Conv2DLayer):
+        return layer.W.get_value().shape[0]
+    if isinstance(layer, DenseLayer):
+        return layer.W.get_value().shape[1]
+    if isinstance(layer, InputLayer):
+        return layer.output_shape[1]
+    # Handles ConcatLayers and straight-through layers, but not
+    # other types of merging layers.
+    return sum(count_output_filters(inlay) for inlay in layer_inputs(layer))
+
+def adjusted_output_shape(layer):
+    sh = list(lasagne.layers.get_output_shape(layer))
+    sh[1] = count_output_filters(layer)
+    return tuple(sh)
 
 def compute_next_layers(net):
     out_layer = compute_out_layers(net)
@@ -413,7 +429,7 @@ class PurposeMapper:
             batch_size=batch_size,
             shape=crop_size)
         for layer in layers:
-            sh = lasagne.layers.get_output_shape(layer)
+            sh = adjusted_output_shape(layer)
             responses[layer] = np.zeros((sh[1], input_set.count()))
             responselocs[layer] = np.zeros(
                 (sh[1], input_set.count()), dtype=np.int32)
@@ -573,7 +589,7 @@ class ActivationSample:
             shape=crop_size,
             limit=self.n)
         for layer in layers:
-            sh = lasagne.layers.get_output_shape(layer)
+            sh = adjusted_output_shape(layer)
             activations[layer] = np.zeros((self.n, sh[1]))
         if pretty:
             pretty.subtask('Compiling debug function.')
@@ -729,6 +745,99 @@ class NetworkMerger:
         if hasbias:
             target.b.set_value(resb)
 
+class NetworkPermuter:
+    """
+    Clones a network while hacking out and healing subsets of neurons.
+    """
+    def __init__(self, network):
+        self.net = network
+
+    def permute(self, tensor, spec, axis=0):
+        # Normalize the specification
+        size = tensor.shape[axis]
+        used = set(spec)
+        perm = spec + [j for j in range(size) if j not in used]
+        return np.take(tensor, perm, axis=axis)
+
+    def create_permuted_network(self, permutations):
+        """
+        Sizes is a list of tuples (layer, permuatation), indicating the
+        permutations of the units in each layer.
+        """
+        # Load the ActivationSample for this network instance
+        result = copy.deepcopy(self.net)
+        result.checkpoint = None
+        (axial_endpoints, axial_synapse) = compute_axial_maps(result)
+        # Layers should be listed from closest-to-output first,
+        # and then loop towards the beginning.
+        # TODO: add a sort.
+        for layer, perm in permutations:
+            # if layer is a string, look it up in net
+            if isinstance(layer, str):
+                layer = result.layer_named(layer)
+            else:
+                layer = result.layer_numbered(layer)
+            # permute the layer's parameters
+            weights = layer.W.get_value()
+            if isinstance(layer, DenseLayer):
+                # Dense layers organize weights as (in_units, out_units)
+                layer.W.set_value(self.permute(weights, perm, axis=1))
+            else:
+                # Conv layers organize weights as (out_units, in_units, x, y)
+                layer.W.set_value(self.permute(weights, perm, axis=0))
+            if hasattr(layer, 'b') and layer.b:
+                biases = layer.b.get_value()
+                layer.b.set_value(self.permute(biases, perm))
+            # also truncate batchnorm/relu or other parameterized layers
+            # TODO: think about the case of more than one endpoint
+            par = axial_endpoints[layer][0]['par']
+            for parlayer in par:
+                for param in parlayer.params:
+                    val = param.get_value()
+                    # assume that parameters of this dimension are
+                    # one-per-channel and need to be permuted.
+                    param.set_value(self.permute(val, perm))
+            # get the next layer's parameters
+            # TODO: handle the case of more than one endpoint
+            endpoint = axial_endpoints[layer][0]['layer']
+            # get the dendtritic layers
+            # TODO: handle the case when the endpoint has more than one output
+            syn = axial_synapse[endpoint][0]
+            # TODO: think about b.
+            # dimensions: (syn_units, in_units, 3, 3)
+            syn_weights = syn.W.get_value()
+            # Handle flattened input of dense layer case by unflattening
+            flattened = None
+            if isinstance(syn, DenseLayer):
+                # Read geometric size of endpoint layer.  Note that
+                # the number of filters reported might be incorrect.
+                geometry = endpoint.output_shape[2:]
+                # The flattened input size
+                flattened = syn_weights.shape[0]
+                # Compute the actual number of filters
+                filters = int(flattened / np.prod(geometry))
+                # The output size
+                syn_units = syn_weights.shape[1:]
+                # Unflatten the syn_weights
+                syn_weights.shape = ((filters,) + geometry + syn_units)
+                # transpose the weight matrix to conv2d orientation:
+                # out dimension first instead of last.
+                syn_weights = np.rollaxis(
+                    syn_weights, len(syn_weights.shape) - 1)
+            # Incorporate permutation
+            syn_weights = self.permute(syn_weights, perm, axis=1)
+            if flattened:
+                # transpose the weight matrix to dense orientation:
+                # syn dimension last (size, 3, 3, syn_units)
+                syn_weights = np.rollaxis(
+                    syn_weights, 0, len(syn_weights.shape))
+                # now reflatten: (size*3*3, syn_units)
+                syn_weights = syn_weights.reshape((flattened,) + syn_units)
+            # New weights.  Cast back down to float32.
+            syn.W.set_value(syn_weights)
+        # That's it.
+        return result
+
 class NetworkReducer:
     """
     Clones a network while hacking out and healing subsets of neurons.
@@ -755,7 +864,7 @@ class NetworkReducer:
             if isinstance(layer, str):
                 layer = result.layer_named(layer)
             else:
-                layer = result.layer_numbered(self.net(layer_number(layer)))
+                layer = result.layer_numbered(layer)
             numunits = int(numunits)
             # chop the layer's parameters
             weights = layer.W.get_value()
@@ -805,10 +914,11 @@ class NetworkReducer:
             # Handle flattened input of dense layer case by unflattening
             flattened = None
             if isinstance(syn, DenseLayer):
-                unflattened = endpoint.output_shape[1:]
+                geometry = endpoint.output_shape[2:]
                 flattened = syn_weights.shape[0]
+                filters = int(flattened / np.prod(geometry))
                 syn_units = syn_weights.shape[1:]
-                syn_weights.shape = (unflattened + syn_units)
+                syn_weights.shape = ((filters, ) + geometry + syn_units)
                 # transpose the weight matrix to conv2d orientation:
                 # syn dimension first
                 syn_weights = np.rollaxis(

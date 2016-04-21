@@ -3,16 +3,15 @@
 import pretty
 import argparse
 from periscope import Corpus, Checkpoint
-from periscope.debug import NetworkReducer
-from periscope import prepare_corpus, load_from_checkpoint, class_for_shortname
+from periscope.debug import NetworkPermuter
+from periscope import load_from_checkpoint, class_for_shortname
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--corpus', help='corpus directory', default='corpus/mp')
 parser.add_argument('--net', help='name of network model class name',
      default=None)
 parser.add_argument('--model', help='directory for checkpoints', default=None)
-parser.add_argument('--reduce', help='layer name and size',
-     nargs=2, action='append')
+parser.add_argument('--perm', help='layer name and size',
+     nargs='+', action='append')
 parser.add_argument('--save', help='directory to save reduced model')
 args = parser.parse_args()
 
@@ -40,11 +39,17 @@ else:
 if '/' not in args.save:
     args.save = 'model/' + args.save
 
-# Load the corpus
-corpus = Corpus(args.corpus)
+# Decode permutation arguments
+permutations = []
+for p in args.perm:
+    layername = p[0]
+    perm = []
+    for j in range(1, len(p), 2):
+        perm.extend(range(int(p[j]), int(p[j + 1])))
+    permutations.append((layername, perm))
 
 # After the training, generate purpose database and images.
-reducer = NetworkReducer(net, corpus)
-reduced = reducer.create_reduced_network(args.reduce)
+reducer = NetworkPermuter(net)
+reduced = reducer.create_permuted_network(permutations)
 reduced.checkpoint = Checkpoint(args.save)
 reduced.save_checkpoint()
