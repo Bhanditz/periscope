@@ -29,11 +29,11 @@ def load_net_for(modelname, netname):
         modelname = 'model/' + modelname
     if netname is not None:
         # use an explicit net name.
-        net = class_for_shortname(netname)(model=modelname)
+        net = class_for_shortname(netname)(model=modelname, truncate=True)
     else:
         try:
             # an existing model specifies its network class.
-            net = load_from_checkpoint(modelname)
+            net = load_from_checkpoint(modelname, truncate=True)
         except:
             # a network class name can be guessed by using the model name.
             shortname = modelname.split('/')[-1].split('-')[0]

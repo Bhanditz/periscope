@@ -24,11 +24,11 @@ if '/' not in args.model:
 
 if args.net is not None:
     # use an explicit net name.
-    net = class_for_shortname(args.net)(model=args.model)
+    net = class_for_shortname(args.net)(model=args.model, truncate=True)
 else:
     try:
         # an existing model specifies its network class.
-        net = load_from_checkpoint(args.model)
+        net = load_from_checkpoint(args.model, truncate=True)
     except:
         # a network class name can be guessed by using the model name.
         shortname = args.model.split('/')[-1].split('-')[0]

@@ -638,21 +638,17 @@ class NetworkMerger:
         plaininput = True
         for layernum, layer in enumerate(layers[:-1]):
             if hasattr(layer, 'W'):
-                print("Merging dendrite layer", layernum, layer)
                 self.merge_one_dendrite_layer(
                         result, layernum, share_input=plaininput)
                 plaininput = False
             else:
-                print("Merging simple layer", layernum, layer)
                 self.merge_one_simple_layer(result, layernum)
         # The last layer should be the output layer with softmax
-        print("Merging output layer", len(layers)- 1)
         self.merge_one_dendrite_layer(
                 result, len(layers) - 1, share_output=True)
         return result
 
     def merge_one_simple_layer(self, result, layernum):
-        print("Merging", layernum, result.layer_numbered(layernum))
         allparams = [result.layer_numbered(layernum).params] + [
             net.layer_numbered(layernum).params for net in self.nets]
         # Loop through all vector parameters
@@ -667,20 +663,15 @@ class NetworkMerger:
                 assert len(npval.shape) == 1
                 assert npval.shape[0] > 2
                 rvalue = np.concatenate((rvalue, npval))
-            print('Setting', tparam, rvalue.shape)
             tparam.set_value(rvalue)
 
     def merge_one_dendrite_layer(
             self, res, layernum, share_input=False, share_output=False):
         target = res.layer_numbered(layernum)
-        print("Merging", layernum, target, "share_input", share_input,
-                "share_output", share_output)
         if isinstance(target, DenseLayer):
-            print("Using DenseLayer axis")
             inpd = 0
             outd = 1
         else:
-            print("Using ConvLayer axis")
             inpd = 1
             outd = 0
         convshape = target.W.get_value().shape[2:]
@@ -698,9 +689,7 @@ class NetworkMerger:
                     rshape[outd] = netw.shape[outd]
                     resw.shape = rshape
                 # Concatenate along the input axis only.
-                print('layernum',layernum,resw.shape, netw.shape,inpd)
                 resw = np.concatenate((resw, netw), axis=inpd)
-                print('result', resw.shape)
                 # Bias aligns with output shape, so must be added.
                 if hasattr(layer, 'b') and layer.b:
                     hasbias = True
@@ -731,16 +720,13 @@ class NetworkMerger:
                 resw = np.concatenate(
                         (resw, np.zeros(inpzshape, dtype='float32')), axis=inpd)
             # Concatentate the next network below the accumulated network.
-            print('layernum',layernum,resw.shape, netw.shape,outd)
             resw = np.concatenate((resw, netw), axis=outd)
-            print('result', resw.shape)
             if hasattr(layer, 'b') and layer.b:
                 hasbias = True
                 netb = layer.b.get_value()
                 # If bias is present, concatenate it to the end
                 resb = np.concatenate((resb, netb))
         # After everything has been concatenated, mutate the target network.
-        print('final shape', resw.shape)
         target.W.set_value(resw)
         if hasbias:
             target.b.set_value(resb)
@@ -877,6 +863,9 @@ class NetworkReducer:
                 layer.W.set_value(weights[(slice(0, numunits), ) + tuple(
                     (slice(None) for x in weights.shape[1:]))])
                 oldsize = weights.shape[0]
+            # if nothing is removed, then there is nothing to do.
+            if oldsize == numunits:
+                continue
             if hasattr(layer, 'b') and layer.b:
                 biases = layer.b.get_value()
                 layer.b.set_value(biases[:numunits])
