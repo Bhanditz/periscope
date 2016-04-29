@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-import warnings
-warnings.filterwarnings('ignore', '.*downsample module.*')
-warnings.filterwarnings('ignore', '.*Using gpu*')
 
 import pretty
 import argparse
 from periscope import Corpus, Checkpoint
-from periscope.debug import NetworkReducer
+from periscope.debug import ActivationSample, NetworkOrderer, NetworkPermuter
 from periscope import prepare_corpus, load_from_checkpoint, class_for_shortname
 
 parser = argparse.ArgumentParser()
@@ -14,8 +11,8 @@ parser.add_argument('--corpus', help='corpus directory', default='corpus/mp')
 parser.add_argument('--net', help='name of network model class name',
      default=None)
 parser.add_argument('--model', help='directory for checkpoints', default=None)
-parser.add_argument('--reduce', help='layer name and size',
-     nargs=2, action='append')
+parser.add_argument('--layer', help='layer names', nargs=2, action='append')
+parser.add_argument('--lowlayer', help='layers to discard lowest first', nargs=2, action='append')
 parser.add_argument('--save', help='directory to save reduced model')
 args = parser.parse_args()
 
@@ -46,8 +43,15 @@ if '/' not in args.save:
 # Load the corpus
 corpus = Corpus(args.corpus)
 
-# After the training, generate purpose database and images.
-reducer = NetworkReducer(net, corpus)
-reduced = reducer.create_reduced_network(args.reduce)
-reduced.checkpoint = Checkpoint(args.save)
-reduced.save_checkpoint()
+# Ensure the activation sample is created.
+sample = ActivationSample(net, corpus, force=False, pretty=pretty)
+
+# Create an orderer
+orderer = NetworkOrderer(net, sample)
+loworder = orderer.order_units_by_high_residuals(args.lowlayer)
+order = orderer.order_units_by_high_residuals(args.layer)
+print(loworder + order)
+permuter = NetworkPermuter(net)
+permuted = permuter.create_permuted_network(loworder + order)
+permuted.checkpoint = Checkpoint(args.save)
+permuted.save_checkpoint()

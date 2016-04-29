@@ -1,0 +1,12 @@
+./makeorder.py \
+        --model=ww4bn2-merged-0-2 \
+        --layer conv1 64 \
+        --layer conv2 64 \
+        --layer conv3 128 \
+        --layer conv4 128 \
+        --layer conv5 256 \
+        --layer conv6 256 \
+        --layer conv7 512 \
+        --layer conv8 512 \
+        --layer fc9 1024 \
+        --save ww4bn2-merged-0-2order

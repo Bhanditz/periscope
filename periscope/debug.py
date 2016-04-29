@@ -824,6 +824,76 @@ class NetworkPermuter:
         # That's it.
         return result
 
+class NetworkOrderer:
+    def __init__(self, network, activations):
+        self.net = network
+        self.acts = activations
+
+    def order_units_by_high_residuals(self, layers):
+        (axial_endpoints, axial_synapse) = compute_axial_maps(self.net)
+        result = []
+        for layername, startindex in layers:
+            startindex = int(startindex)
+            layer = self.net.layer_named(layername)
+            endpoint = axial_endpoints[layer][0]['layer']
+            activations = self.acts.layernum(self.net.layer_number(endpoint))
+            n = activations.shape[1]
+            print('working on layer', layername,
+                    'preserving', startindex, 'of', n)
+            chosen = list(range(startindex))
+            remaining = list(range(startindex, n))
+            if len(chosen) == 0 and len(remaining) > 1:
+                chosen.append(remaining[0])
+                del remaining[0]
+            # Go through all the columns beyond startindex.
+            # Repeatedly add the "least redundant" column as measured
+            # by residuals.
+            while len(remaining) > 1:
+                A = activations[:, chosen]
+                B = activations[:, remaining]
+                (X, res, rank, s) = np.linalg.lstsq(A, B)
+                highest = np.argmax(res)
+                print('added', remaining[highest], 'residual', res[highest])
+                chosen.append(remaining[highest])
+                del remaining[highest]
+            if len(remaining) == 1:
+                chosen.append(remaining[0])
+                del remaining[0]
+            result.append((layername, chosen))
+        return result
+
+    def order_units_by_low_residuals(self, layers):
+        (axial_endpoints, axial_synapse) = compute_axial_maps(self.net)
+        result = []
+        for layername, startindex in layers:
+            startindex = int(startindex)
+            layer = self.net.layer_named(layername)
+            endpoint = axial_endpoints[layer][0]['layer']
+            activations = self.acts.layernum(self.net.layer_number(endpoint))
+            n = activations.shape[1]
+            print('working on layer', layername,
+                    'preserving', startindex, 'of', n)
+            chosen = list(range(n))
+            removed = []
+            # Go through all the columns beyond startindex.
+            # Repeatedly drop the "most redundant" column as measured
+            # by residuals.  The last one to drop is the most important.
+            while len(chosen) > startindex and len(chosen) > 1:
+                bestres = float('inf')
+                bestind = -1
+                for index in range(startindex, len(chosen)):
+                    A = activations[:, chosen[:index] + chosen[index + 1:]]
+                    b = activations[:, chosen[index]]
+                    (X, res, rank, s) = np.linalg.lstsq(A, b)
+                    if res < bestres:
+                        bestind = index
+                        bestres = res
+                print('removed', chosen[bestind], 'residual', bestres)
+                removed.insert(0, chosen[bestind])
+                del chosen[bestind]
+            result.append((layername, chosen + removed))
+        return result
+
 class NetworkReducer:
     """
     Clones a network while hacking out and healing subsets of neurons.

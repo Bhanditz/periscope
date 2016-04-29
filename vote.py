@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import warnings
+warnings.filterwarnings('ignore', '.*downsample module.*')
+warnings.filterwarnings('ignore', '.*Using gpu*')
 
 import pretty
 import argparse
